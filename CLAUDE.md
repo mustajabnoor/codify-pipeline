@@ -31,7 +31,7 @@ An agent runs on a schedule, watches the web for **buying signals** (someone who
 | Database + auth | **Supabase** (Postgres, Supabase Auth, Row Level Security) |
 | Dashboard | **Next.js (App Router) + TypeScript + Tailwind + shadcn/ui**, hosted on **Vercel** at `pipeline.codify-labs.com` |
 | Scheduling | **GitHub Actions** cron workflows (one workflow per source) |
-| Alerts | **Telegram bot** (daily summary + `/run <source>` commands) — phase 2 |
+| Alerts | **Slack** — daily summary + run alerts via an Incoming Webhook (phase 2); `/run <source>` slash command via a dashboard API route that triggers the source's GitHub workflow (phase 3) |
 | Email sending | Not built in. Approved leads are exported/pushed to **Instantly or Smartlead** — phase 4 |
 
 ## 3. Repository layout
@@ -164,11 +164,14 @@ REDDIT_CLIENT_ID=
 REDDIT_CLIENT_SECRET=
 REDDIT_USER_AGENT=
 PRODUCTHUNT_TOKEN=
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_CHAT_ID=
+SLACK_WEBHOOK_URL=                # Slack Incoming Webhook for the alerts channel
 ```
 
-In Claude Code cloud sessions, these are provided as network secrets. If a key is missing, the code must fail clearly for that source only, not crash the whole run.
+In Claude Code cloud sessions, these are set in the environment's settings. If a key is missing, the code must fail clearly for that source only, not crash the whole run.
+
+Two dev and prod Supabase projects exist: **pipeline-dev** (Claude Code cloud sessions, dry runs, testing new sources and migrations) and **pipeline-prod** (GitHub Actions secrets, live dashboard). Apply every new migration to dev first, then prod.
+
+**Anthropic key in Claude Code cloud sessions:** the key is stored as `CODIFY_ANTHROPIC_API_KEY` there (so Claude Code itself never picks it up); GitHub Actions uses `ANTHROPIC_API_KEY`. The agent accepts either. Those sessions also set `ANTHROPIC_BASE_URL` for Claude Code's own traffic, which the Anthropic SDK reads by default — the agent must always pass `base_url="https://api.anthropic.com"` explicitly.
 
 ## 11. Guardrails (non-negotiable)
 
@@ -182,7 +185,7 @@ In Claude Code cloud sessions, these are provided as network secrets. If a key i
 ## 12. Build roadmap (do phases in order, small PRs)
 
 - **Phase 1 — Foundation:** repo scaffold, Supabase migrations (all tables, enums, views, RLS), `.env.example`, agent core (db client, dedupe, models, run logging, `--dry-run`), CI.
-- **Phase 2 — First sources:** Job postings + Funding news end-to-end (collect → enrich → score → draft → save), GitHub Actions crons, Telegram daily summary.
+- **Phase 2 — First sources:** Job postings + Funding news end-to-end (collect → enrich → score → draft → save), GitHub Actions crons, Slack daily summary.
 - **Phase 3 — Dashboard v1:** auth, Today, Leads list (filters + export), Lead detail (approve/edit), Agent health. Deploy to Vercel on `pipeline.codify-labs.com`.
 - **Phase 4 — More sources:** Social listening, Product launches, then Google Maps, Tech-stack, Agency partners.
 - **Phase 5 — Outreach:** push approved leads to Instantly/Smartlead, reply import + AI reply categorization, follow-up reminders, source performance view.

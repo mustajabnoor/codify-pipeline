@@ -12,6 +12,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """Tests never see real credentials or a local .env file."""
     for field in Settings.model_fields:
         monkeypatch.delenv(field.upper(), raising=False)
+    monkeypatch.delenv("CODIFY_ANTHROPIC_API_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
 
 
