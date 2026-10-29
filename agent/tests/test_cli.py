@@ -11,7 +11,7 @@ from agent.core.errors import MissingConfigError
 from agent.core.models import LeadCandidate, LeadSource, RunStatus, SourceConfig
 from agent.sources.base import Source
 
-from .conftest import make_candidate
+from .conftest import FakeAI, make_candidate
 
 
 def test_fixture_dry_run_prints_inserts(capsys: pytest.CaptureFixture[str]) -> None:
@@ -86,7 +86,7 @@ def test_runs_each_enabled_config(needs_key: type[NeedsKeySource]) -> None:
         ),
     ]
     settings = Settings(_env_file=None, apify_token="t")
-    status = cli.run_source("job_posting", settings=settings, repo=repo, dry_run=False)
+    status = cli.run_source("job_posting", settings=settings, repo=repo, dry_run=False, ai=FakeAI())
     assert needs_key.seen_configs == [{"keywords": ["bubble"]}]
     # One lead stored, one item error reported by the source -> partial.
     assert status is RunStatus.PARTIAL
@@ -125,3 +125,26 @@ def test_dry_run_reads_but_never_writes(capsys: pytest.CaptureFixture[str]) -> N
     assert (run.stats.leads_updated, run.stats.leads_skipped) == (1, 1)
     (line,) = capsys.readouterr().out.splitlines()
     assert json.loads(line)["action"] == "add_signal"
+
+
+def test_real_run_requires_anthropic_key(needs_key: type[NeedsKeySource]) -> None:
+    repo = MemoryRepository()
+    settings = Settings(_env_file=None, apify_token="t")
+    with pytest.raises(MissingConfigError, match="ANTHROPIC_API_KEY"):
+        cli.run_source("job_posting", settings=settings, repo=repo, dry_run=False)
+    (row,) = repo.runs.values()
+    assert row["status"] == "failed" and repo.leads == {}
+
+
+def test_dry_run_without_key_skips_ai(needs_key: type[NeedsKeySource]) -> None:
+    repo = DryRunRepository()
+    settings = Settings(_env_file=None, apify_token="t")
+    cli.run_source("job_posting", settings=settings, repo=repo, dry_run=True)
+    (lead,) = repo.leads.values()
+    assert "fit_score" not in lead
+    assert repo.outreach == []
+
+
+def test_no_ai_is_dry_run_only(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["run", "fixture", "--dry-run", "--no-ai"]) == 0
+    assert cli.main(["run", "fixture", "--no-ai"]) == 2

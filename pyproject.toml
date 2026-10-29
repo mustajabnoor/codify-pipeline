@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Lead collector agent for Codify Labs"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=2.3",
     "httpx>=0.27",
     "pydantic>=2.8",
     "pydantic-settings>=2.4",

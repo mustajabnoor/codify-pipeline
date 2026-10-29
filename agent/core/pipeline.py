@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 
 from agent.core.db import Repository
 from agent.core.dedupe import Action, Decision, decide
@@ -8,13 +9,22 @@ from agent.core.runs import RunRecorder
 
 log = logging.getLogger(__name__)
 
+# Adds AI extraction, scoring and a draft to a candidate (agent/ai/assess.py).
+Assess = Callable[[LeadCandidate], LeadCandidate]
 
-def process_candidate(candidate: LeadCandidate, repo: Repository, run: RunRecorder) -> Action:
-    """Dedupe one candidate and store it. Enrichment, scoring and drafting slot in
-    before the write in Phase 2."""
+
+def process_candidate(
+    candidate: LeadCandidate, repo: Repository, run: RunRecorder, assess: Assess | None = None
+) -> Action:
+    """Dedupe one candidate and store it. Only candidates that will become new
+    leads go through `assess`, so known companies and posts cost no tokens.
+    An assess error propagates: the candidate is not saved and the next run
+    sees it again."""
     decision = decide(candidate, repo)
     try:
         if decision.action is Action.CREATE_LEAD:
+            if assess:
+                candidate = assess(candidate)
             try:
                 repo.create_lead(candidate)
             except DuplicateLeadError:

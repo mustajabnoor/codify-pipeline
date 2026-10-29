@@ -9,7 +9,7 @@ from postgrest.exceptions import APIError
 
 from agent.core.db import SupabaseRepository
 from agent.core.errors import DuplicateLeadError, DuplicateSignalError
-from agent.core.models import RunStats, RunStatus
+from agent.core.models import OutreachDraft, RunStats, RunStatus
 
 from .conftest import make_candidate
 
@@ -208,3 +208,46 @@ def test_source_configs_only_for_lead_sources(client: FakeClient, repo: Supabase
     ]
     (config,) = repo.get_source_configs("funding")
     assert config.config == {"rounds": ["seed"]}
+
+
+def test_create_lead_writes_outreach_draft_for_primary_contact(
+    client: FakeClient, repo: SupabaseRepository
+) -> None:
+    lead_id = uuid4()
+    client.responses[("leads", "insert")] = [{"id": str(lead_id)}]
+    client.responses[("contacts", "insert")] = [
+        {"id": "c-other", "is_primary": False, "email": None, "full_name": "Sam"},
+        {"id": "c-primary", "is_primary": True, "email": "a@acme.com", "full_name": "Dana"},
+    ]
+    candidate = make_candidate(
+        contacts=[{"full_name": "Sam"}, {"email": "a@acme.com", "is_primary": True}]
+    ).model_copy(
+        update={"outreach": OutreachDraft(channel="email", subject="Hi", body="Worth a look?")}
+    )
+
+    repo.create_lead(candidate)
+    assert client.ops() == [
+        ("leads", "insert"),
+        ("signals", "insert"),
+        ("contacts", "insert"),
+        ("outreach", "insert"),
+        ("activities", "insert"),
+    ]
+    outreach = client.calls[3].payload
+    assert outreach["contact_id"] == "c-primary"
+    assert (outreach["status"], outreach["subject"]) == ("draft", "Hi")
+    assert outreach["draft_body"].startswith("Worth a look?\n\n")
+
+
+def test_failed_outreach_insert_removes_the_lead(
+    client: FakeClient, repo: SupabaseRepository
+) -> None:
+    lead_id = uuid4()
+    client.responses[("leads", "insert")] = [{"id": str(lead_id)}]
+    client.responses[("outreach", "insert")] = APIError({"code": "23514", "message": "check"})
+    candidate = make_candidate().model_copy(
+        update={"outreach": OutreachDraft(channel="email", subject="Hi", body="b")}
+    )
+    with pytest.raises(APIError):
+        repo.create_lead(candidate)
+    assert (client.calls[-1].table, client.calls[-1].op) == ("leads", "delete")

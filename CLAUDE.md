@@ -99,6 +99,15 @@ Keep prompts in `/agent/ai/prompts/` as versioned files. Request structured JSON
 
 Use a cheaper model for extraction and the stronger model for scoring + drafting. Log token usage per run in `agent_runs`.
 
+Implementation (`agent/ai/`):
+- Models: extraction `claude-haiku-5-5` (effort low); scoring + drafting `claude-opus-5-5` (effort medium) with server-side refusal fallbacks (`fallbacks: "default"`). Settings per task live in `TASKS` in `agent/ai/client.py`. Always `base_url="https://api.anthropic.com"`.
+- AI runs only for candidates that will become **new** leads (after dedupe and do-not-contact), so known companies and posts cost no tokens. Existing leads are not rescored.
+- Output is JSON via structured outputs, validated with pydantic (`agent/ai/schemas.py`); an invalid answer is retried once. If any AI step fails for an item, the item is **not saved** and the error goes to `agent_runs.errors`; the next run retries it. A rejected key or unknown model stops the run.
+- Real runs require the Anthropic key. Dry runs skip AI when there's no key or with `--no-ai`.
+- Proof points: drafts may only cite what is in `agent/ai/prompts/company_profile.md`; keep that file current.
+- The sign-off and opt-out line (`SIGN_OFF` in `agent/core/models.py`) are appended by code to every draft and don't count toward the 100 words.
+- Changing a prompt: add a new version file (`score_v2.md`) and bump the constant in `agent/ai/assess.py`; each signal records the prompt versions in `metadata.ai_prompts`.
+
 ## 7. Database (Supabase / Postgres)
 
 Write schema as SQL migrations in `/supabase/migrations` (named `YYYYMMDDHHMMSS_name.sql`). Use `uuid` PKs (`gen_random_uuid()`), `created_at` / `updated_at timestamptz` with an `updated_at` trigger. Enable RLS on every table: signed-in users whose email is in `team_members` can read/write (`public.is_team_member()`); `anon` gets nothing; the agent uses the service-role key. Views use `security_invoker = true`. CI applies all migrations to plain Postgres (`supabase/tests/ci_bootstrap.sql` stubs the Supabase `auth` schema and roles) and runs `supabase/tests/rls_smoke.sql`.
@@ -187,12 +196,12 @@ Two dev and prod Supabase projects exist: **pipeline-dev** (Claude Code cloud se
 
 - **Phase 1 — Foundation:** repo scaffold, Supabase migrations (all tables, enums, views, RLS), `.env.example`, agent core (db client, dedupe, models, run logging, `--dry-run`), CI.
 - **Phase 2 — First sources:** Job postings + Funding news end-to-end (collect → enrich → score → draft → save), GitHub Actions crons, Slack daily summary.
-  - 2.1 Job postings collector (RemoteOK + WWR), HTTP retry helper
-  - 2.2 AI layer: score + draft (+ extract), token/cost logging, `outreach` draft rows
+  - 2.1 Job postings collector (RemoteOK + WWR), HTTP retry helper (done)
+  - 2.2 AI layer: score + draft (+ extract), token/cost logging, `outreach` draft rows (done)
   - 2.3 Enrichment: Hunter + MillionVerifier
   - 2.4 Funding news collector
   - 2.5 Cron workflows per source, Slack alerts + daily summary
-  - No live (non-dry) runs or crons until 2.2 is merged. Apify job actors and Wellfound come after 2.5.
+  - Live runs are allowed once 2.2 is merged; crons come in 2.5. Apify job actors and Wellfound come after 2.5.
 - **Phase 3 — Dashboard v1:** auth, Today, Leads list (filters + export), Lead detail (approve/edit), Agent health. Deploy to Vercel on `pipeline.codify-labs.com`.
 - **Phase 4 — More sources:** Social listening, Product launches, then Google Maps, Tech-stack, Agency partners.
 - **Phase 5 — Outreach:** push approved leads to Instantly/Smartlead, reply import + AI reply categorization, follow-up reminders, source performance view.

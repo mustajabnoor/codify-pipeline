@@ -20,3 +20,7 @@ class DuplicateLeadError(AgentError):
 
 class DuplicateSignalError(AgentError):
     """A signal with this source_url already exists."""
+
+
+class FatalRunError(AgentError):
+    """Stops the whole run instead of failing one item (e.g. a rejected API key)."""
