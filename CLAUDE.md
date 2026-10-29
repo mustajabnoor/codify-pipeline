@@ -58,7 +58,7 @@ README.md
 
 | # | Source | Buying signal | How to collect | Cadence |
 |---|---|---|---|---|
-| 1 | **Job postings** | Company hiring a Bubble / Shopify / React / full-stack / mobile developer | Job-board RSS (RemoteOK, We Work Remotely), Apify job scrapers (LinkedIn Jobs, Indeed), Wellfound | Daily |
+| 1 | **Job postings** | Company hiring a Bubble / Shopify / React / full-stack / mobile developer | RemoteOK JSON API (its RSS is gone), We Work Remotely RSS, Apify job scrapers (LinkedIn Jobs, Indeed), Wellfound | Daily |
 | 2 | **Funding news** | Startup just raised pre-seed / seed / Series A | Funding-news RSS feeds; Claude extracts company, amount, round, founder | Daily |
 | 3 | **Social listening** | Public post asking for a developer/agency or describing a broken app | Reddit API (r/forhire, r/startups, r/SaaS, r/Entrepreneur, r/Bubble, r/lovable, r/SideProject), F5Bot alerts, Indie Hackers | Every 4 hours |
 | 4 | **Tech-stack detection** | Site on Bubble / Shopify / WordPress that is slow or broken | BuiltWith / Wappalyzer / Store Leads lists + Google PageSpeed Insights API | Weekly batch |
@@ -81,7 +81,8 @@ collect → normalize → dedupe → enrich (decision-maker + email) → verify 
 - **Enrichment:** Hunter.io (domain search / email finder) or Apollo API. Verify with MillionVerifier (or NeverBounce). Store the verification result; never mark an email valid without a verifier response.
 - **Every run** writes a row to `agent_runs` with counts and errors.
 - **Every collector supports `--dry-run`** (no DB writes, prints what it would insert as JSON lines; reads Supabase for dedupe when credentials are set).
-- **Domain normalization** drops platform hosts (reddit.com, linkedin.com, github.com, producthunt.com, …) so a link to them never becomes a company domain; customer subdomains on hosting platforms (`acme.myshopify.com`) are kept. List lives in `agent/core/normalize.py`.
+- **Company domain from text:** collectors whose source gives no website (job boards) take the company's domain from links in the post, accepting only hosts that contain the company name (`company_domain_from_text` in `agent/core/normalize.py`). When unsure it returns none: a wrong domain would merge two companies.
+- **Domain normalization** drops platform hosts (reddit.com, linkedin.com, github.com, producthunt.com, job-board / ATS hosts like greenhouse.io, …) so a link to them never becomes a company domain; customer subdomains on hosting platforms (`acme.myshopify.com`) are kept. List lives in `agent/core/normalize.py`.
 
 ## 6. AI steps (Claude API)
 
@@ -186,6 +187,12 @@ Two dev and prod Supabase projects exist: **pipeline-dev** (Claude Code cloud se
 
 - **Phase 1 — Foundation:** repo scaffold, Supabase migrations (all tables, enums, views, RLS), `.env.example`, agent core (db client, dedupe, models, run logging, `--dry-run`), CI.
 - **Phase 2 — First sources:** Job postings + Funding news end-to-end (collect → enrich → score → draft → save), GitHub Actions crons, Slack daily summary.
+  - 2.1 Job postings collector (RemoteOK + WWR), HTTP retry helper
+  - 2.2 AI layer: score + draft (+ extract), token/cost logging, `outreach` draft rows
+  - 2.3 Enrichment: Hunter + MillionVerifier
+  - 2.4 Funding news collector
+  - 2.5 Cron workflows per source, Slack alerts + daily summary
+  - No live (non-dry) runs or crons until 2.2 is merged. Apify job actors and Wellfound come after 2.5.
 - **Phase 3 — Dashboard v1:** auth, Today, Leads list (filters + export), Lead detail (approve/edit), Agent health. Deploy to Vercel on `pipeline.codify-labs.com`.
 - **Phase 4 — More sources:** Social listening, Product launches, then Google Maps, Tech-stack, Agency partners.
 - **Phase 5 — Outreach:** push approved leads to Instantly/Smartlead, reply import + AI reply categorization, follow-up reminders, source performance view.

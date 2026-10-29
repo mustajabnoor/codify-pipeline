@@ -11,8 +11,8 @@ See [CLAUDE.md](CLAUDE.md) for the full product and technical brief.
 
 ```
 agent/        Python collector (python -m agent run <source> [--dry-run])
-  core/       config, models, normalize, dedupe, db, runs, pipeline
-  sources/    one module per source (Phase 2+), registry.py, fixture.py (dev only)
+  core/       config, models, normalize, dedupe, db, runs, pipeline, http, text
+  sources/    one module per source (job_posts.py, ...), registry.py, fixture.py (dev only)
   enrich/     contact finding + email verification (Phase 2)
   ai/         Claude prompts: extract, score, draft (Phase 2)
   tests/
@@ -39,6 +39,10 @@ uv run python -m agent sources
 
 ```bash
 uv run python -m agent run fixture --dry-run
+```
+
+```bash
+uv run python -m agent run job_posting --dry-run
 ```
 
 `--dry-run` never writes to the database. It prints each would-be insert as a
