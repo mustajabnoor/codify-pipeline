@@ -1,0 +1,57 @@
+[
+  {
+    "company_name": "Brightloop",
+    "website": "https://www.Brightloop.io/careers?utm_source=remoteok",
+    "industry": "Fintech",
+    "country": "US",
+    "tech_stack": ["bubble", "stripe"],
+    "signal": {
+      "source": "job_posting",
+      "source_url": "https://remoteok.com/remote-jobs/123456-bubble-developer-brightloop#apply",
+      "signal_type": "job_post",
+      "title": "Bubble.io Developer (6-week contract)",
+      "raw_text": "We're hiring a Bubble developer to rebuild our Stripe Connect marketplace."
+    },
+    "contacts": [
+      {"full_name": "Dana Ruiz", "role": "Founder", "email": "Dana@Brightloop.io", "is_primary": true, "found_via": "fixture"}
+    ]
+  },
+  {
+    "company_name": "Brightloop",
+    "website": "brightloop.io",
+    "funding_amount": "1500000",
+    "funding_round": "seed",
+    "funding_date": "2026-10-20",
+    "signal": {
+      "source": "funding",
+      "source_url": "https://news.example.com/brightloop-raises-1-5m-seed",
+      "signal_type": "funding_round",
+      "title": "Brightloop raises $1.5M seed"
+    }
+  },
+  {
+    "company_name": "u/shopify_struggles",
+    "website": "https://www.reddit.com/user/shopify_struggles",
+    "signal": {
+      "source": "social",
+      "source_url": "https://www.reddit.com/r/shopify/comments/abc123/checkout_broken/",
+      "signal_type": "reddit_post",
+      "title": "Checkout broken after theme update, need a dev",
+      "metadata": {"subreddit": "shopify"}
+    }
+  },
+  {
+    "company_name": "Nimbus Analytics",
+    "website": "https://nimbus-analytics.com",
+    "signal": {
+      "source": "product_launch",
+      "source_url": "https://www.producthunt.com/posts/nimbus-analytics",
+      "signal_type": "product_launch",
+      "title": "Nimbus Analytics launched on Product Hunt"
+    }
+  },
+  {
+    "company_name": "Broken item",
+    "signal": {"source": "social", "source_url": "not-a-url", "signal_type": "reddit_post"}
+  }
+]

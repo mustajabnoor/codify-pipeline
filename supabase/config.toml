@@ -1,0 +1,3 @@
+# Minimal Supabase CLI config (lets `supabase link` / `supabase db push` find
+# the project root). All other settings use CLI defaults.
+project_id = "codify-pipeline"
