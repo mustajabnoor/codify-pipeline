@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
@@ -48,11 +49,18 @@ FAKE_USAGE = Usage(tokens=100, cost=Decimal("0.01"))
 
 class FakeAI:
     """Stands in for ClaudeAI: canned output per task, records each call.
-    `fail` maps a task to the exception it raises."""
+    `fail` maps a task to the exception it raises; `answers` maps a task to a
+    function of the user prompt returning the output (overrides the canned one)."""
 
-    def __init__(self, score: int = 7, fail: dict[str, Exception] | None = None) -> None:
+    def __init__(
+        self,
+        score: int = 7,
+        fail: dict[str, Exception] | None = None,
+        answers: dict[str, Callable[[str], BaseModel]] | None = None,
+    ) -> None:
         self.score = score
         self.fail = fail or {}
+        self.answers = answers or {}
         self.calls: list[tuple[str, str]] = []  # (task, user prompt)
 
     def structured(
@@ -61,6 +69,10 @@ class FakeAI:
         self.calls.append((task, user))
         if task in self.fail:
             raise self.fail[task]
+        if task in self.answers:
+            answer = self.answers[task](user)
+            assert isinstance(answer, output)
+            return answer, FAKE_USAGE
         canned: dict[str, BaseModel] = {
             "extract": Extraction(
                 industry="saas",

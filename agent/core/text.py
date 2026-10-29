@@ -1,4 +1,5 @@
 import re
+from collections.abc import Iterable
 from html.parser import HTMLParser
 
 # Tags that start a new line in rendered text.
@@ -74,6 +75,20 @@ def fix_mojibake(text: str) -> str:
     """Repair UTF-8 that was decoded as Latin-1 upstream ("â\x80\x94" -> "—").
     Runs that don't decode as UTF-8 are left alone."""
     return _MOJIBAKE.sub(_redecode, text)
+
+
+def fold(text: str) -> str:
+    """Lowercase, with punctuation runs turned into single spaces, so
+    "Full-Stack" matches "full stack" and "Next.js" matches "next js"."""
+    return re.sub(r"[^a-z0-9+#]+", " ", text.lower()).strip()
+
+
+def has_phrase(text: str, phrases: Iterable[str]) -> bool:
+    """Whether any phrase occurs in text, compared folded. A phrase must start
+    at a word boundary: "ios" matches "iOS Developer", not "Studios"; "react"
+    still matches "ReactJS"."""
+    folded = fold(text)
+    return any(re.search(rf"(?<![a-z0-9]){re.escape(p)}", folded) for p in map(fold, phrases) if p)
 
 
 def truncate(text: str, limit: int) -> str:

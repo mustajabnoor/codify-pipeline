@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-written WordPress-style feed covering the parser and filter cases. -->
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<channel>
+  <title>Funding News (sample)</title>
+  <link>https://news.example.com</link>
+  <item>
+    <title>Acme AI Raises $3M in Seed Funding</title>
+    <link>https://news.example.com/2026/10/acme-ai-raises-3m/</link>
+    <pubDate>Wed, 28 Oct 2026 09:00:00 +0000</pubDate>
+    <category><![CDATA[Seed]]></category>
+    <category><![CDATA[AI]]></category>
+    <description><![CDATA[Acme AI raised $3M.]]></description>
+    <content:encoded><![CDATA[<p><a href="https://www.acme.ai/">Acme AI</a>, a San Francisco-based startup building scheduling agents for clinics, has raised $3M in seed funding.</p><p>The round was led by Foo Ventures. CEO and co-founder Jane Roe said the money will fund the first product hires.</p>]]></content:encoded>
+  </item>
+  <item>
+    <title>Bolt Robotics closes &#8364;2.5M pre-seed round</title>
+    <link>https://news.example.com/2026/10/bolt-robotics-pre-seed/</link>
+    <pubDate>Tue, 27 Oct 2026 12:30:00 +0000</pubDate>
+    <content:encoded><![CDATA[<p>Berlin-based Bolt Robotics (bolt-robotics.eu) has closed a &euro;2.5M pre-seed round to build warehouse picking software.</p>]]></content:encoded>
+  </item>
+  <item>
+    <title>Mega Corp Raises $80M Series B</title>
+    <link>https://news.example.com/2026/10/mega-corp-series-b/</link>
+    <pubDate>Tue, 27 Oct 2026 10:00:00 +0000</pubDate>
+    <content:encoded><![CDATA[<p>Mega Corp raised $80M.</p>]]></content:encoded>
+  </item>
+  <item>
+    <title>Weekly funding roundup: 12 startups raised money this week</title>
+    <link>https://news.example.com/2026/10/weekly-roundup/</link>
+    <pubDate>Mon, 26 Oct 2026 08:00:00 +0000</pubDate>
+    <content:encoded><![CDATA[<p>Twelve startups raised money this week.</p>]]></content:encoded>
+  </item>
+  <item>
+    <title>Opinion: why most AI startups fail</title>
+    <link>https://news.example.com/2026/10/opinion-ai/</link>
+    <pubDate>Mon, 26 Oct 2026 07:00:00 +0000</pubDate>
+    <content:encoded><![CDATA[<p>Opinion piece.</p>]]></content:encoded>
+  </item>
+  <item>
+    <title>Old Co raises seed round</title>
+    <link>https://news.example.com/2026/09/old-co/</link>
+    <pubDate>Tue, 01 Sep 2026 08:00:00 +0000</pubDate>
+    <content:encoded><![CDATA[<p>Old Co raised seed money long ago.</p>]]></content:encoded>
+  </item>
+  <item>
+    <title>Ghost Co secures $1M seed</title>
+    <link>https://news.example.com/2026/10/ghost-co/</link>
+    <pubDate>Mon, 26 Oct 2026 06:00:00 +0000</pubDate>
+    <content:encoded><![CDATA[<p>Ghost Co, a payments startup, secured $1M in seed funding.</p>]]></content:encoded>
+  </item>
+  <item>
+    <title>No link here</title>
+    <pubDate>Mon, 26 Oct 2026 06:00:00 +0000</pubDate>
+  </item>
+</channel>
+</rss>

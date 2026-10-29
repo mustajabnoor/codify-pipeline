@@ -16,11 +16,13 @@ from agent.core.text import truncate
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 # Bump the version (new file) when a prompt changes; it is saved on each signal.
 EXTRACT_PROMPT = "extract_v1"
-SCORE_PROMPT = "score_v1"
+SCORE_PROMPT = "score_v2"
 DRAFT_PROMPT = "draft_v1"
 TEXT_LIMIT = 6000
 
 UsageRecorder = Callable[[int, Decimal], None]
+# Signal metadata that is bookkeeping, not information about the lead.
+_BRIEF_SKIP = frozenset({"ai_prompts", "feed"})
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -42,7 +44,11 @@ def signal_brief(candidate: LeadCandidate) -> str:
             ("Website", candidate.website or "unknown"),
             ("Signal", f"{signal.source.value} / {signal.signal_type}: {signal.title or ''}"),
             ("Source URL", signal.source_url),
-            *((k.replace("_", " ").capitalize(), v) for k, v in sorted(signal.metadata.items())),
+            *(
+                (k.replace("_", " ").capitalize(), v)
+                for k, v in sorted(signal.metadata.items())
+                if k not in _BRIEF_SKIP
+            ),
         ]
     )
     text = truncate(signal.raw_text or "", TEXT_LIMIT)
@@ -112,14 +118,19 @@ def apply_extraction(candidate: LeadCandidate, extraction: Extraction) -> LeadCa
 
 
 class Assessor:
-    """Callable used by the pipeline on each candidate about to become a new lead."""
+    """Runs the AI steps. The pipeline calls it on each candidate about to
+    become a new lead; sources that must read their items with AI first (e.g.
+    funding news) call `run` directly."""
 
     def __init__(self, ai: AIClient, record_usage: UsageRecorder) -> None:
         self.ai = ai
         self._record = record_usage
-        self._prompts = {p: load_prompt(p) for p in (EXTRACT_PROMPT, SCORE_PROMPT, DRAFT_PROMPT)}
+        self._prompts: dict[str, str] = {}
 
-    def _call(self, task: str, prompt: str, user: str, output: type[T]) -> T:
+    def run(self, task: str, prompt: str, user: str, output: type[T]) -> T:
+        """One AI call; tokens are recorded whether it succeeds or not."""
+        if prompt not in self._prompts:
+            self._prompts[prompt] = load_prompt(prompt)
         try:
             result, usage = self.ai.structured(
                 task, system=self._prompts[prompt], user=user, output=output
@@ -131,13 +142,17 @@ class Assessor:
         return result
 
     def __call__(self, candidate: LeadCandidate) -> LeadCandidate:
-        extraction = self._call("extract", EXTRACT_PROMPT, signal_brief(candidate), Extraction)
-        candidate = apply_extraction(candidate, extraction)
-        assessment = self._call("score", SCORE_PROMPT, lead_brief(candidate), Assessment)
-        prompts = {"extract": EXTRACT_PROMPT, "score": SCORE_PROMPT}
+        prompts = dict(candidate.signal.metadata.get("ai_prompts") or {})
+        # Sources that already extracted with AI (funding news) skip this step.
+        if "extract" not in prompts:
+            extraction = self.run("extract", EXTRACT_PROMPT, signal_brief(candidate), Extraction)
+            candidate = apply_extraction(candidate, extraction)
+            prompts["extract"] = EXTRACT_PROMPT
+        assessment = self.run("score", SCORE_PROMPT, lead_brief(candidate), Assessment)
+        prompts["score"] = SCORE_PROMPT
         outreach = None
         if not assessment.is_reject:
-            draft = self._call("draft", DRAFT_PROMPT, draft_brief(candidate, assessment), Draft)
+            draft = self.run("draft", DRAFT_PROMPT, draft_brief(candidate, assessment), Draft)
             outreach = OutreachDraft(
                 channel=draft.best_channel, subject=draft.subject, body=draft.body
             )

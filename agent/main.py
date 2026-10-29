@@ -72,7 +72,17 @@ def run_source(
         # Inside the recorder so a missing key is logged as a failed run.
         settings.require(*source_cls.required_settings, scope=name)
         assess = build_assessor(settings, run, dry_run=dry_run, no_ai=no_ai, ai=ai)
-        source = source_cls(settings, report_error=run.record_error)
+        if source_cls.needs_ai and assess is None:
+            raise AgentError(
+                f"source {name!r} needs AI to read its items; it can't run with --no-ai "
+                "or without an Anthropic key"
+            )
+        source = source_cls(
+            settings,
+            report_error=run.record_error,
+            ai=assess,
+            is_known_url=lambda url: repo.lead_id_for_source_url(url) is not None,
+        )
         for config in config_dicts:
             for candidate in source.collect(config):
                 run.stats.items_seen += 1

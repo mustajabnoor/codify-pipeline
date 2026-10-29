@@ -27,7 +27,7 @@ from pydantic import ValidationError
 from agent.core.http import get_with_retry
 from agent.core.models import LeadCandidate
 from agent.core.normalize import company_domain_from_text
-from agent.core.text import fix_mojibake, html_to_text, truncate
+from agent.core.text import fix_mojibake, has_phrase, html_to_text, truncate
 from agent.sources.base import ErrorReporter, Source
 
 REMOTEOK_API = "https://remoteok.com/api"
@@ -138,18 +138,6 @@ def parse_rss(xml: str | bytes, report: ErrorReporter | None = None) -> list[Job
     return posts
 
 
-def _fold(text: str) -> str:
-    """Lowercase, with punctuation runs turned into single spaces, so
-    "Full-Stack" matches "full stack" and "Next.js" matches "next js"."""
-    return re.sub(r"[^a-z0-9+#]+", " ", text.lower()).strip()
-
-
-def _has_phrase(text: str, phrases: Iterable[str]) -> bool:
-    # Phrase must start at a word boundary: "ios" matches "iOS Developer",
-    # not "Studios"; "react" still matches "ReactJS".
-    return any(re.search(rf"(?<![a-z0-9]){re.escape(p)}", text) for p in map(_fold, phrases) if p)
-
-
 @dataclass(frozen=True)
 class Filters:
     title_keywords: tuple[str, ...]
@@ -168,10 +156,10 @@ class Filters:
         now = now or datetime.now(UTC)
         if post.posted_at and post.posted_at < now - self.max_age:
             return False
-        if not _has_phrase(_fold(post.title), self.title_keywords):
+        if not has_phrase(post.title, self.title_keywords):
             return False
-        text = _fold(f"{post.title} {html_to_text(post.description_html)}")
-        return not _has_phrase(text, self.exclude_keywords)
+        text = f"{post.title} {html_to_text(post.description_html)}"
+        return not has_phrase(text, self.exclude_keywords)
 
 
 def to_candidate(post: JobPost, feed: str) -> LeadCandidate:
