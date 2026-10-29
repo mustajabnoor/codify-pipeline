@@ -30,7 +30,7 @@ class RunRecorder:
         log.warning("%s %s", message, context or "")
         self.stats.errors.append(RunError(message=message, context=context))
 
-    def add_tokens(self, tokens: int, cost: float = 0.0) -> None:
+    def add_tokens(self, tokens: int, cost: Decimal | float = 0) -> None:
         self.stats.tokens_used += tokens
         self.stats.cost_estimate += Decimal(str(cost))
 
@@ -57,8 +57,9 @@ class RunRecorder:
             log.exception("could not write agent_runs row for run %s", self.run_id)
         s = self.stats
         log.info(
-            "run finished: source=%s status=%s seen=%d new=%d updated=%d skipped=%d errors=%d",
+            "run finished: source=%s status=%s seen=%d new=%d updated=%d skipped=%d errors=%d "
+            "tokens=%d cost=$%.4f",
             self.source, self.status, s.items_seen, s.leads_new, s.leads_updated,
-            s.leads_skipped, len(s.errors),
+            s.leads_skipped, len(s.errors), s.tokens_used, s.cost_estimate,
         )  # fmt: skip
         return False

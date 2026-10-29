@@ -43,12 +43,19 @@ class Repository(DedupeLookup, Protocol):
 
 def _activity(lead_id: UUID, type_: str, candidate: LeadCandidate) -> dict[str, Any]:
     title = candidate.signal.title or candidate.signal.signal_type
-    return {
-        "lead_id": str(lead_id),
-        "type": type_,
-        "note": f"{candidate.source.value}: {title} ({candidate.signal.source_url})",
-        "actor": "agent",
-    }
+    note = f"{candidate.source.value}: {title} ({candidate.signal.source_url})"
+    if candidate.assessment:
+        note += f"; scored {candidate.assessment.fit_score}/10"
+    return {"lead_id": str(lead_id), "type": type_, "note": note, "actor": "agent"}
+
+
+def _outreach_contact(rows: list[dict[str, Any]]) -> str | None:
+    """Which stored contact a draft is addressed to: primary, else one with an
+    email, else the first named one."""
+    for wanted in (lambda r: r["is_primary"], lambda r: r["email"], lambda r: r["full_name"]):
+        if match := next((r for r in rows if wanted(r)), None):
+            return match["id"]
+    return None
 
 
 def _run_row(status: RunStatus, stats: RunStats) -> dict[str, Any]:
@@ -62,6 +69,7 @@ class MemoryRepository:
         self.leads: dict[UUID, dict[str, Any]] = {}
         self.signals: dict[str, dict[str, Any]] = {}  # by source_url
         self.contacts: list[dict[str, Any]] = []
+        self.outreach: list[dict[str, Any]] = []
         self.activities: list[dict[str, Any]] = []
         self.runs: dict[UUID, dict[str, Any]] = {}
         self.source_configs: list[SourceConfig] = []
@@ -89,7 +97,12 @@ class MemoryRepository:
         lead_id = uuid4()
         self.leads[lead_id] = candidate.lead_row()
         self.signals[candidate.signal.source_url] = candidate.signal_row(lead_id)
-        self.contacts.extend(candidate.contact_rows(lead_id))
+        contacts = [{**row, "id": str(uuid4())} for row in candidate.contact_rows(lead_id)]
+        self.contacts.extend(contacts)
+        if candidate.outreach:
+            self.outreach.append(
+                candidate.outreach.outreach_row(lead_id, _outreach_contact(contacts))
+            )
         self.activities.append(_activity(lead_id, "lead_created", candidate))
         return lead_id
 
@@ -154,6 +167,11 @@ class DryRunRepository(MemoryRepository):
                 "lead": candidate.lead_row(),
                 "signal": candidate.signal.model_dump(mode="json"),
                 "contacts": [c.model_dump(mode="json") for c in candidate.contacts],
+                "outreach": candidate.outreach
+                and {
+                    **candidate.outreach.model_dump(mode="json", exclude={"body"}),
+                    "draft_body": candidate.outreach.draft_body,
+                },
             }
         )
         return lead_id
@@ -246,8 +264,8 @@ class SupabaseRepository:
         return [SourceConfig.model_validate(row) for row in rows]
 
     def create_lead(self, candidate: LeadCandidate) -> UUID:
-        # PostgREST has no multi-table transaction, so a failed signal insert
-        # deletes the lead it just created (cascade removes anything attached).
+        # PostgREST has no multi-table transaction, so a failed insert after the
+        # lead deletes it again (cascade removes anything attached).
         try:
             lead = self._db.table("leads").insert(candidate.lead_row()).execute().data[0]
         except Exception as exc:
@@ -257,8 +275,13 @@ class SupabaseRepository:
         lead_id = UUID(lead["id"])
         try:
             self._insert_signal(lead_id, candidate)
+            contacts: list[dict[str, Any]] = []
             if rows := candidate.contact_rows(lead_id):
-                self._db.table("contacts").insert(rows).execute()
+                contacts = self._db.table("contacts").insert(rows).execute().data
+            if candidate.outreach:
+                self._db.table("outreach").insert(
+                    candidate.outreach.outreach_row(lead_id, _outreach_contact(contacts))
+                ).execute()
             self._db.table("activities").insert(
                 _activity(lead_id, "lead_created", candidate)
             ).execute()

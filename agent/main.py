@@ -7,9 +7,11 @@ Exit codes: 0 success (or partial: some items failed, see agent_runs.errors),
 import argparse
 import logging
 
+from agent.ai.assess import Assessor
+from agent.ai.client import AIClient, ClaudeAI
 from agent.core.config import Settings
 from agent.core.db import DryRunRepository, Repository, SupabaseRepository
-from agent.core.errors import AgentError
+from agent.core.errors import AgentError, FatalRunError
 from agent.core.log import setup_logging
 from agent.core.models import RunStatus
 from agent.core.pipeline import process_candidate
@@ -29,10 +31,36 @@ def build_repository(settings: Settings, *, dry_run: bool) -> Repository:
     return DryRunRepository()
 
 
-def run_source(name: str, *, settings: Settings, repo: Repository, dry_run: bool) -> RunStatus:
+def build_assessor(
+    settings: Settings, run: RunRecorder, *, dry_run: bool, no_ai: bool, ai: AIClient | None
+) -> Assessor | None:
+    """AI scoring is required for real runs, so no unscored lead reaches the
+    database. Dry runs skip it when asked (--no-ai) or when there is no key."""
+    if no_ai:
+        log.info("AI off (--no-ai): leads are not scored or drafted")
+        return None
+    if ai is None:
+        if dry_run and settings.missing("anthropic_api_key"):
+            log.warning("dry run: no Anthropic key, leads are not scored or drafted")
+            return None
+        ai = ClaudeAI.from_settings(settings)  # raises MissingConfigError without a key
+    return Assessor(ai, run.add_tokens)
+
+
+def run_source(
+    name: str,
+    *,
+    settings: Settings,
+    repo: Repository,
+    dry_run: bool,
+    no_ai: bool = False,
+    ai: AIClient | None = None,
+) -> RunStatus:
     source_cls = get_source(name)
     if source_cls.dry_run_only and not dry_run:
         raise AgentError(f"source {name!r} is dev-only; use --dry-run")
+    if no_ai and not dry_run:
+        raise AgentError("--no-ai is for dry runs only; real runs always score leads")
 
     configs = repo.get_source_configs(name)
     if configs and not any(c.enabled for c in configs):
@@ -43,12 +71,15 @@ def run_source(name: str, *, settings: Settings, repo: Repository, dry_run: bool
     with RunRecorder(repo, name) as run:
         # Inside the recorder so a missing key is logged as a failed run.
         settings.require(*source_cls.required_settings, scope=name)
+        assess = build_assessor(settings, run, dry_run=dry_run, no_ai=no_ai, ai=ai)
         source = source_cls(settings, report_error=run.record_error)
         for config in config_dicts:
             for candidate in source.collect(config):
                 run.stats.items_seen += 1
                 try:
-                    process_candidate(candidate, repo, run)
+                    process_candidate(candidate, repo, run, assess)
+                except FatalRunError:
+                    raise
                 except Exception as exc:
                     run.record_error(
                         f"{type(exc).__name__}: {exc}",
@@ -67,6 +98,9 @@ def main(argv: list[str] | None = None) -> int:
     run_cmd.add_argument(
         "--dry-run", action="store_true", help="no DB writes; print would-be inserts as JSON"
     )
+    run_cmd.add_argument(
+        "--no-ai", action="store_true", help="dry runs only: skip AI scoring and drafting"
+    )
     commands.add_parser("sources", help="list available sources")
     args = parser.parse_args(argv)
 
@@ -80,7 +114,9 @@ def main(argv: list[str] | None = None) -> int:
     settings = Settings()
     try:
         repo = build_repository(settings, dry_run=args.dry_run)
-        status = run_source(args.source, settings=settings, repo=repo, dry_run=args.dry_run)
+        status = run_source(
+            args.source, settings=settings, repo=repo, dry_run=args.dry_run, no_ai=args.no_ai
+        )
     except AgentError as exc:
         log.error("%s", exc)
         return 2

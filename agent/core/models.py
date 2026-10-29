@@ -87,6 +87,13 @@ class RunStatus(StrEnum):
     FAILED = "failed"
 
 
+# A fit score at or below this marks the lead rejected (CLAUDE.md §6).
+REJECT_MAX_SCORE = 3
+# Appended by code to every draft so it is always there and never counts toward
+# the body's word limit. Every draft must carry an opt-out (CLAUDE.md §11).
+SIGN_OFF = "— Mustajab, Codify Labs\n\nNot relevant? Reply 'no' and I won't follow up."
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -141,6 +148,42 @@ class ContactIn(BaseModel):
         return self
 
 
+class LeadAssessment(BaseModel):
+    """AI scoring of a lead. Field descriptions double as instructions in the
+    JSON schema sent to Claude."""
+
+    fit_score: int = Field(ge=1, le=10, description="Fit score from 1 to 10 per the rubric.")
+    score_reason: str = Field(description="1-2 sentences explaining the score.")
+    service_fit: list[Service] = Field(
+        min_length=1, description="The services we sell that match this lead's need."
+    )
+    pain_point: str = Field(description="One concrete, observable issue or need from the signal.")
+
+    @property
+    def is_reject(self) -> bool:
+        return self.fit_score <= REJECT_MAX_SCORE
+
+
+class OutreachDraft(BaseModel):
+    channel: Channel
+    subject: str
+    body: str  # as drafted, without SIGN_OFF
+
+    @property
+    def draft_body(self) -> str:
+        return f"{self.body.strip()}\n\n{SIGN_OFF}"
+
+    def outreach_row(self, lead_id: UUID, contact_id: str | None) -> dict[str, Any]:
+        return {
+            "lead_id": str(lead_id),
+            "contact_id": contact_id,
+            "channel": self.channel.value,
+            "subject": self.subject,
+            "draft_body": self.draft_body,
+            "status": OutreachStatus.DRAFT.value,
+        }
+
+
 class LeadCandidate(BaseModel):
     """What every collector yields: one signal about one company, which may or
     may not already be a lead. `domain` is derived from `website` if not given."""
@@ -159,6 +202,9 @@ class LeadCandidate(BaseModel):
     funding_date: date | None = None
     signal: SignalIn
     contacts: list[ContactIn] = Field(default_factory=list)
+    # Filled by the AI step (agent/ai/assess.py) for new leads only.
+    assessment: LeadAssessment | None = None
+    outreach: OutreachDraft | None = None
 
     @model_validator(mode="after")
     def _derive(self) -> "LeadCandidate":
@@ -176,9 +222,15 @@ class LeadCandidate(BaseModel):
         return [c.email for c in self.contacts if c.email]
 
     def lead_row(self) -> dict[str, Any]:
-        row = self.model_dump(mode="json", exclude={"signal", "contacts"})
+        row = self.model_dump(mode="json", exclude={"signal", "contacts", "assessment", "outreach"})
         row["first_source"] = self.source.value
         row["status"] = LeadStatus.NEW.value
+        if self.assessment:
+            row.update(self.assessment.model_dump(mode="json"))
+            if self.assessment.is_reject:
+                row["status"] = LeadStatus.REJECTED.value
+        if self.outreach:
+            row["best_channel"] = self.outreach.channel.value
         return row
 
     def signal_row(self, lead_id: UUID) -> dict[str, Any]:

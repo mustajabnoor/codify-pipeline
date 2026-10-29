@@ -14,7 +14,7 @@ agent/        Python collector (python -m agent run <source> [--dry-run])
   core/       config, models, normalize, dedupe, db, runs, pipeline, http, text
   sources/    one module per source (job_posts.py, ...), registry.py, fixture.py (dev only)
   enrich/     contact finding + email verification (Phase 2)
-  ai/         Claude prompts: extract, score, draft (Phase 2)
+  ai/         Claude client, versioned prompts, extract -> score -> draft
   tests/
 dashboard/    Next.js app (Phase 3)
 supabase/     migrations (schema source of truth), seed.sql, tests/ (CI only)
@@ -44,6 +44,17 @@ uv run python -m agent run fixture --dry-run
 ```bash
 uv run python -m agent run job_posting --dry-run
 ```
+
+New leads are extracted, scored and drafted by Claude (see CLAUDE.md §6). That
+needs `ANTHROPIC_API_KEY` (or `CODIFY_ANTHROPIC_API_KEY`); real runs fail without
+it, dry runs skip AI. Add `--no-ai` to a dry run to skip it on purpose. Cost is
+roughly $0.03 per new lead; known posts and companies cost nothing.
+
+```bash
+uv run python -m agent run job_posting --dry-run --no-ai
+```
+
+Drafts may only cite proof points listed in `agent/ai/prompts/company_profile.md`.
 
 `--dry-run` never writes to the database. It prints each would-be insert as a
 JSON line on stdout (logs go to stderr). If `SUPABASE_URL` and

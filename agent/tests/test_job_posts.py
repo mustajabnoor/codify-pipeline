@@ -20,6 +20,8 @@ from agent.sources.job_posts import (
     to_candidate,
 )
 
+from .conftest import FakeAI
+
 FIXTURES = Path(__file__).parent / "fixtures" / "job_posts"
 REMOTEOK_JSON = json.loads((FIXTURES / "remoteok_api.json").read_text())
 WWR_RSS = (FIXTURES / "wwr_full_stack.rss").read_bytes()
@@ -212,7 +214,7 @@ def run(config: dict[str, Any]) -> tuple[RunStatus, MemoryRepository]:
         SourceConfig(source=LeadSource.JOB_POSTING, name="default", config=config)
     ]
     status = cli.run_source(
-        "job_posting", settings=Settings(_env_file=None), repo=repo, dry_run=False
+        "job_posting", settings=Settings(_env_file=None), repo=repo, dry_run=False, ai=FakeAI()
     )
     return status, repo
 
@@ -245,7 +247,9 @@ def test_collect_end_to_end() -> None:
 @pytest.mark.usefixtures("feeds")
 def test_rerun_skips_known_posts() -> None:
     _, repo = run(config(rss_feeds=[WWR_FEED]))
-    cli.run_source("job_posting", settings=Settings(_env_file=None), repo=repo, dry_run=False)
+    cli.run_source(
+        "job_posting", settings=Settings(_env_file=None), repo=repo, dry_run=False, ai=FakeAI()
+    )
     second = list(repo.runs.values())[1]
     assert (second["leads_new"], second["leads_skipped"]) == (0, 4)
 
