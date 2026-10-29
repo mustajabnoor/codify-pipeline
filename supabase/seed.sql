@@ -5,13 +5,19 @@ insert into public.source_configs (source, name, config, schedule, enabled) valu
 (
   'job_posting', 'default',
   '{
+    "remoteok": true,
+    "rss_feeds": ["https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss",
+                  "https://weworkremotely.com/categories/remote-front-end-programming-jobs.rss"],
+    "title_keywords": ["bubble", "shopify", "react", "next.js", "full stack", "fullstack",
+                       "mobile developer", "mobile engineer", "mobile app", "flutter", "ios",
+                       "android", "no-code", "nocode", "webflow", "wordpress", "frontend",
+                       "front end", "web developer", "app developer", "mvp"],
+    "exclude_keywords": ["senior staff", "unpaid", "equity only"],
+    "max_age_days": 30,
     "job_titles": ["bubble developer", "bubble.io developer", "shopify developer",
                    "react developer", "full stack developer", "mobile app developer",
                    "react native developer", "flutter developer", "no-code developer"],
-    "rss_feeds": ["https://remoteok.com/remote-dev-jobs.rss",
-                  "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss"],
-    "apify_actors": [],
-    "exclude_keywords": ["senior staff", "unpaid", "equity only"]
+    "apify_actors": []
   }',
   '0 3 * * *', true
 ),

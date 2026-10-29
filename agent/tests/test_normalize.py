@@ -1,6 +1,11 @@
 import pytest
 
-from agent.core.normalize import normalize_domain, normalize_email, normalize_url
+from agent.core.normalize import (
+    company_domain_from_text,
+    normalize_domain,
+    normalize_email,
+    normalize_url,
+)
 
 
 @pytest.mark.parametrize(
@@ -39,6 +44,10 @@ def test_normalize_domain(value: str, expected: str) -> None:
         "github.com/acme",
         "myshopify.com",
         "https://-bad-.com",
+        "https://boards.greenhouse.io/acme/jobs/1",
+        "acme.breezy.hr",
+        "https://jobs.lever.co/acme",
+        "acme.jobs.personio.de",
     ],
 )
 def test_normalize_domain_rejects(value: str | None) -> None:
@@ -66,3 +75,26 @@ def test_normalize_email() -> None:
 )
 def test_normalize_url(value: str, expected: str) -> None:
     assert normalize_url(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("company", "text", "expected"),
+    [
+        ("Carrot", "https://c212.net/x and https://get-carrot.com/about", "get-carrot.com"),
+        ("Vested, Inc.", "URL: https://vested.co (https://vested.co/)", "vested.co"),
+        # Careers subdomain -> main domain; shortest host wins over most linked.
+        ("Proxify AB", "http://career.proxify.io http://career.proxify.io", "proxify.io"),
+        ("Coinbase", "www.coinbase.com/careers https://app.coinbase.com/a https://app.coinbase.com/b",
+         "coinbase.com"),
+        # Multi-word names match joined or by a distinctive first word.
+        ("Sanctuary Computer", "https://sanctuary.computer/work", "sanctuary.computer"),
+        ("Salesloft Inc", "Apply at https://salesloft.com/company/careers/.", "salesloft.com"),
+        # ATS pages, unrelated sites and generic first words never count.
+        ("Carrot", "https://carrot.breezy.hr/p/1 https://www.dol.gov", None),
+        ("Remote Labs", "https://remote.com", None),
+        ("AI", "https://ai.com", None),
+        ("Acme", None, None),
+    ],
+)  # fmt: skip
+def test_company_domain_from_text(company: str, text: str | None, expected: str | None) -> None:
+    assert company_domain_from_text(company, text) == expected

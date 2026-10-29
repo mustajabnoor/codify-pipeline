@@ -1,12 +1,14 @@
 from agent.core.errors import UnknownSourceError
 from agent.sources.base import Source
 from agent.sources.fixture import FixtureSource
+from agent.sources.job_posts import JobPostingsSource
 
 SOURCES: dict[str, type[Source]] = {
     cls.name: cls
     for cls in (
         FixtureSource,
-        # Phase 2: JobPostingsSource, FundingSource
+        JobPostingsSource,
+        # Phase 2: FundingSource
     )
 }
 
