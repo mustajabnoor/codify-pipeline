@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  agent:
+    name: Agent (ruff + pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked
+      - name: Ruff lint
+        run: uv run ruff check .
+      - name: Ruff format
+        run: uv run ruff format --check .
+      - name: Tests
+        run: uv run pytest
+      - name: Dry run smoke test
+        run: uv run python -m agent run fixture --dry-run
+
+  migrations:
+    name: Supabase migrations + RLS
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply migrations, seed and RLS smoke test
+        run: |
+          set -euo pipefail
+          run() { echo "::group::$1"; psql -v ON_ERROR_STOP=1 -q -f "$1"; echo "::endgroup::"; }
+          run supabase/tests/ci_bootstrap.sql
+          for f in supabase/migrations/*.sql; do run "$f"; done
+          run supabase/seed.sql
+          run supabase/tests/rls_smoke.sql

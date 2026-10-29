@@ -20,13 +20,13 @@ An agent runs on a schedule, watches the web for **buying signals** (someone who
 - White-label development for agencies without in-house devs
 
 ### Users
-- Mustajab (admin) and Asad (business developer). Small team, private tool. Timezone: Asia/Karachi (UTC+5).
+- Mustajab only (single user, private tool). Timezone: Asia/Karachi (UTC+5). Dashboard access is limited to emails in the `team_members` table, so another user can be added later without code changes.
 
 ## 2. Tech stack (decided — do not change without asking)
 
 | Part | Choice |
 |---|---|
-| Agent / collectors | **Python 3.12**, `httpx`, `pydantic`, `playwright` (only where a real browser is needed) |
+| Agent / collectors | **Python 3.12** (managed with **uv**), `httpx`, `pydantic`, `supabase` client, `playwright` (only where a real browser is needed) |
 | AI | **Claude API** (Anthropic Python SDK) for extraction, scoring, message drafting |
 | Database + auth | **Supabase** (Postgres, Supabase Auth, Row Level Security) |
 | Dashboard | **Next.js (App Router) + TypeScript + Tailwind + shadcn/ui**, hosted on **Vercel** at `pipeline.codify-labs.com` |
@@ -80,7 +80,8 @@ collect → normalize → dedupe → enrich (decision-maker + email) → verify 
 - **Do-not-contact:** check `do_not_contact` (by email and domain) before inserting or enriching. Skip matches.
 - **Enrichment:** Hunter.io (domain search / email finder) or Apollo API. Verify with MillionVerifier (or NeverBounce). Store the verification result; never mark an email valid without a verifier response.
 - **Every run** writes a row to `agent_runs` with counts and errors.
-- **Every collector supports `--dry-run`** (no DB writes, prints what it would insert).
+- **Every collector supports `--dry-run`** (no DB writes, prints what it would insert as JSON lines; reads Supabase for dedupe when credentials are set).
+- **Domain normalization** drops platform hosts (reddit.com, linkedin.com, github.com, producthunt.com, …) so a link to them never becomes a company domain; customer subdomains on hosting platforms (`acme.myshopify.com`) are kept. List lives in `agent/core/normalize.py`.
 
 ## 6. AI steps (Claude API)
 
@@ -99,7 +100,7 @@ Use a cheaper model for extraction and the stronger model for scoring + drafting
 
 ## 7. Database (Supabase / Postgres)
 
-Write schema as SQL migrations in `/supabase/migrations`. Use `uuid` PKs (`gen_random_uuid()`), `created_at` / `updated_at timestamptz` with an `updated_at` trigger. Enable RLS on every table: authenticated team users can read/write; the agent uses the service-role key.
+Write schema as SQL migrations in `/supabase/migrations` (named `YYYYMMDDHHMMSS_name.sql`). Use `uuid` PKs (`gen_random_uuid()`), `created_at` / `updated_at timestamptz` with an `updated_at` trigger. Enable RLS on every table: signed-in users whose email is in `team_members` can read/write (`public.is_team_member()`); `anon` gets nothing; the agent uses the service-role key. Views use `security_invoker = true`. CI applies all migrations to plain Postgres (`supabase/tests/ci_bootstrap.sql` stubs the Supabase `auth` schema and roles) and runs `supabase/tests/rls_smoke.sql`.
 
 **Enums**
 - `lead_source`: job_posting, funding, social, tech_stack, google_maps, product_launch, agency_partner
@@ -107,20 +108,24 @@ Write schema as SQL migrations in `/supabase/migrations`. Use `uuid` PKs (`gen_r
 - `email_status`: unverified, valid, risky, catch_all, invalid
 - `channel`: email, linkedin, x, reddit_reply, whatsapp, phone, other
 - `service`: mvp, saas, ai_integration, shopify, landing_page, website_3d, bubble, white_label
+- `outreach_status`: draft, approved, sent, replied, bounced
+- `reply_category`: interested, not_now, unsubscribe, wrong_person, other
+- `run_status`: running, success, partial, failed
 
 **Tables**
-- `leads` — company_name, domain (unique where not null), website, industry, country, city, company_size, description, tech_stack text[], funding_amount numeric, funding_round, funding_date, pain_point, service_fit service[], fit_score int (1–10), score_reason, best_channel, status lead_status default 'new', owner (Mustajab/Asad), first_source lead_source, last_contacted_at, next_follow_up_at, notes
+- `team_members` — email (PK, lowercase), display_name. Dashboard allow-list; managed from the SQL editor.
+- `leads` — company_name, domain (unique where not null), website, industry, country, city, company_size, description, tech_stack text[], funding_amount numeric, funding_round, funding_date, pain_point, service_fit service[], fit_score int (1–10), score_reason, best_channel, status lead_status default 'new', owner (free text, optional — single user for now), first_source lead_source, last_contacted_at, next_follow_up_at, notes
 - `signals` — lead_id → leads, source lead_source, source_url (unique), signal_type, title, raw_text, detected_at, metadata jsonb. One lead has many signals.
 - `contacts` — lead_id → leads, full_name, role, email, email_status, phone, whatsapp, linkedin_url, x_url, other_url, is_primary bool, found_via
 - `outreach` — lead_id, contact_id, channel, subject, draft_body, final_body, status (draft/approved/sent/replied/bounced), sent_at, replied_at, reply_text, reply_category (interested/not_now/unsubscribe/wrong_person/other)
 - `activities` — lead_id, type, note, actor, created_at (timeline/audit for each lead)
 - `source_configs` — source, name, config jsonb (keywords, subreddits, cities, categories…), schedule text, enabled bool, last_run_at
-- `agent_runs` — source, started_at, finished_at, status, items_seen, leads_new, leads_updated, errors jsonb, tokens_used, cost_estimate
+- `agent_runs` — source (text: lead sources plus non-collector jobs like `fixture`), started_at, finished_at, status run_status, items_seen, leads_new, leads_updated, leads_skipped, errors jsonb, tokens_used, cost_estimate
 - `do_not_contact` — email, domain, reason, created_at
 
 **Views** (for the dashboard)
-- `v_source_performance` — per source: leads, approved, contacted, replied, meetings, won, reply rate, win rate
-- `v_daily_stats` — new leads per day per source, high-score (≥8) count
+- `v_source_performance` — per `first_source` (all 7 listed, even with 0 leads): leads, approved, contacted, replied, meetings, won, reply rate, win rate. Stages are cumulative (a lead in `meeting` also counts as contacted and replied); reply/win rate are over contacted
+- `v_daily_stats` — new leads per day (Asia/Karachi) per source, high-score (≥8) count
 - `v_followups_due` — leads where `next_follow_up_at <= now()` and status not in (won, lost, rejected)
 
 ## 8. Dashboard (pipeline.codify-labs.com)
