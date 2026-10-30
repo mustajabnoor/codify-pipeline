@@ -173,6 +173,7 @@ Implementation (`dashboard/`, details in `dashboard/README.md`):
 - Agent health (`/health`): runs from the last 7 days per source (enabled sources always listed; `fixture` hidden), last run's counts, tokens, cost and errors, and the same "no run in 26h" warning as the Slack summary (`src/lib/health.ts`).
 - Export (`/leads/export?format=xlsx|csv&<filters>`): all matching leads up to 5,000, one row per lead with the primary contact and the latest draft (edited `final_body` if any, else `draft_body`). CSV neutralises cells that spreadsheets would run as formulas. `.xlsx` uses exceljs (its old `uuid` is overridden in `package.json`).
 - `src/lib/database.types.ts` is generated from the migrations (`npm run gen:types`); CI fails when it's stale.
+- Hosting: Vercel project in the owner's own Vercel account (not the client account linked to the same GitHub login), root directory `dashboard`, deploying `main` to production. Env vars: Production = pipeline-prod URL + anon key; Preview = pipeline-dev. pipeline-prod Supabase Auth: Site URL `https://pipeline.codify-labs.com`, redirect URL `https://pipeline.codify-labs.com/**`; users added in Auth → Users and `team_members`.
 - shadcn/ui components are in `src/components/ui` (new-york style). The shadcn registry (ui.shadcn.com) is blocked in Claude Code cloud sessions, so components there are copied from the shadcn GitHub repo.
 
 ## 9. Scheduling (GitHub Actions)
@@ -244,7 +245,7 @@ Two dev and prod Supabase projects exist: **pipeline-dev** (Claude Code cloud se
   - 3.2 Leads list: filters in the URL, bulk approve/reject, .xlsx/.csv export (done)
   - 3.3 Lead detail: contacts, signals, editable draft, approve/reject/status, notes, timeline (done)
   - 3.4 Today KPIs + Agent health (done)
-  - 3.5 Vercel deploy (owner sets env vars, domain and Supabase Auth URLs)
+  - 3.5 Vercel deploy (done; live at https://pipeline.codify-labs.com since 2026-10-30, signed in with magic link)
 - **Phase 4 — More sources:** Social listening, Product launches, then Google Maps, Tech-stack, Agency partners.
 - **Phase 5 — Outreach:** push approved leads to Instantly/Smartlead, reply import + AI reply categorization, follow-up reminders, source performance view.
 
