@@ -18,6 +18,9 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     for field in Settings.model_fields:
         monkeypatch.delenv(field.upper(), raising=False)
     monkeypatch.delenv("CODIFY_ANTHROPIC_API_KEY", raising=False)
+    # CI runs inside GitHub Actions; Slack messages link the run when these are set.
+    for name in ("GITHUB_SERVER_URL", "GITHUB_REPOSITORY", "GITHUB_RUN_ID"):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir(tmp_path)
 
 
