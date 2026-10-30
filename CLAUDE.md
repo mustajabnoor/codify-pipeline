@@ -222,7 +222,7 @@ Two dev and prod Supabase projects exist: **pipeline-dev** (Claude Code cloud se
 - **Phase 2 — First sources:** Job postings + Funding news end-to-end (collect → enrich → score → draft → save), GitHub Actions crons, Slack daily summary.
   - 2.1 Job postings collector (RemoteOK + WWR), HTTP retry helper (done)
   - 2.2 AI layer: score + draft (+ extract), token/cost logging, `outreach` draft rows (done)
-  - 2.3 Enrichment: Hunter + MillionVerifier (built and tested with saved responses; not yet checked live — both keys were still rejected from the cloud session on 2026-10-30)
+  - 2.3 Enrichment: Hunter + MillionVerifier (done; checked live on dev 2026-10-30. Hunter is on the Free plan: 50 credits/month)
   - 2.4 Funding news collector (done)
   - 2.5 Cron workflows per source, Slack alerts + daily summary (done)
   - Live runs are allowed once 2.2 is merged; crons come in 2.5. Apify job actors and Wellfound come after 2.5.
