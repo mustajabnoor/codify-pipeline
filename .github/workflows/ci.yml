@@ -33,6 +33,34 @@ jobs:
       - name: Dry run smoke test
         run: uv run python -m agent run fixture --dry-run
 
+  dashboard:
+    name: Dashboard (lint, types, tests, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    env:
+      # Placeholders: the build inlines public env vars but never calls Supabase.
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Build
+        run: npm run build
+
   migrations:
     name: Supabase migrations + RLS
     runs-on: ubuntu-latest

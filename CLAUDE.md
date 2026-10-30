@@ -143,7 +143,13 @@ Write schema as SQL migrations in `/supabase/migrations` (named `YYYYMMDDHHMMSS_
 
 ## 8. Dashboard (pipeline.codify-labs.com)
 
-Supabase Auth (email magic link), restricted to team accounts. Mobile-first and responsive; installable as a PWA.
+Supabase Auth with **email + password** (decided: no magic links or emailed codes), restricted to team accounts. Mobile-first and responsive; installable as a PWA.
+
+- **No sign-up in the app.** Accounts are created in Supabase (Authentication → Users → Add user) and "Allow new users to sign up" is off. Access = an auth account **and** a row in `team_members`.
+- **Access check:** `src/proxy.ts` (Next 16's name for middleware) refreshes the session and sends signed-out visitors to `/login`; every page and Server Action calls `requireMember()` (`src/lib/dal.ts`), which redirects non-members to `/not-authorized`; RLS enforces the same rule in the database. The dashboard uses only the anon key.
+- **Next.js 16 specifics:** Cache Components are on, so request-time data sits under `<Suspense>` (`loading.tsx` per route group) and the clock is read only after the session check. shadcn/ui components live in `src/components/ui` (copied in; `components.json` is set up for `npx shadcn add`).
+- DB types are hand-written in `dashboard/src/lib/database.types.ts`; a test fails when enums drift from the migrations.
+- Deploy: Vercel project with Root Directory `dashboard` and the two `NEXT_PUBLIC_SUPABASE_*` vars (prod values); checklist in `dashboard/README.md`.
 
 Screens:
 1. **Today** — KPI cards: new leads today, 8+ score leads, follow-ups due, replies waiting. Short list of top new leads.
@@ -220,6 +226,9 @@ Two dev and prod Supabase projects exist: **pipeline-dev** (Claude Code cloud se
   - 2.5 Cron workflows per source, Slack alerts + daily summary (done)
   - Live runs are allowed once 2.2 is merged; crons come in 2.5. Apify job actors and Wellfound come after 2.5.
 - **Phase 3 — Dashboard v1:** auth, Today, Leads list (filters + export), Lead detail (approve/edit), Agent health. Deploy to Vercel on `pipeline.codify-labs.com`.
+  - 3.1 App, email + password login, team gate, Today, Agent health, CI, deploy checklist
+  - 3.2 Leads list: filters, search, bulk approve/reject, Excel + CSV export
+  - 3.3 Lead detail: editable draft, status changes, notes, timeline
 - **Phase 4 — More sources:** Social listening, Product launches, then Google Maps, Tech-stack, Agency partners.
 - **Phase 5 — Outreach:** push approved leads to Instantly/Smartlead, reply import + AI reply categorization, follow-up reminders, source performance view.
 

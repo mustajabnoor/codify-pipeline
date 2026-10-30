@@ -10,6 +10,6 @@ def setup_logging(verbose: bool = False) -> None:
         stream=sys.stderr,
         force=True,
     )
-    # Supabase's HTTP stack logs every request at INFO.
-    for noisy in ("httpx", "httpcore", "hpack"):
+    # Supabase's and Anthropic's HTTP stacks log every request at INFO.
+    for noisy in ("httpx", "httpx2", "httpcore", "hpack"):
         logging.getLogger(noisy).setLevel(logging.WARNING)

@@ -16,7 +16,7 @@ agent/        Python collector (python -m agent run <source> [--dry-run])
   enrich/     contact finding + email verification (Phase 2)
   ai/         Claude client, versioned prompts, extract -> score -> draft
   tests/
-dashboard/    Next.js app (Phase 3)
+dashboard/    Next.js app (Phase 3): see dashboard/README.md
 supabase/     migrations (schema source of truth), seed.sql, tests/ (CI only)
 .github/      CI + per-source cron workflows
 ```
