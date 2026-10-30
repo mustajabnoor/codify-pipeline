@@ -148,3 +148,102 @@ def test_dry_run_without_key_skips_ai(needs_key: type[NeedsKeySource]) -> None:
 def test_no_ai_is_dry_run_only(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["run", "fixture", "--dry-run", "--no-ai"]) == 0
     assert cli.main(["run", "fixture", "--no-ai"]) == 2
+
+
+class Alerts:
+    """Records run alerts (stands in for SlackNotifier.run_finished)."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, int]] = []
+
+    def __call__(self, source: str, status: str, stats: Any) -> None:
+        self.calls.append((source, status, len(stats.errors)))
+
+
+def test_partial_run_alerts_once(needs_key: type[NeedsKeySource]) -> None:
+    alerts = Alerts()
+    settings = Settings(_env_file=None, apify_token="t")
+    cli.run_source(
+        "job_posting", settings=settings, repo=MemoryRepository(), dry_run=False,
+        ai=FakeAI(), notify=alerts,
+    )  # fmt: skip
+    assert alerts.calls == [("job_posting", "partial", 1)]
+
+
+def test_dry_runs_never_alert(needs_key: type[NeedsKeySource]) -> None:
+    alerts = Alerts()
+    settings = Settings(_env_file=None, apify_token="t")
+    cli.run_source(
+        "job_posting", settings=settings, repo=DryRunRepository(), dry_run=True, notify=alerts
+    )
+    assert alerts.calls == []
+
+
+def test_successful_run_does_not_alert() -> None:
+    alerts = Alerts()
+    repo = MemoryRepository()
+    repo.source_configs = [SourceConfig(source=LeadSource.JOB_POSTING, name="a", enabled=False)]
+    cli.run_source(
+        "job_posting", settings=Settings(_env_file=None), repo=repo, dry_run=False, notify=alerts
+    )
+    assert alerts.calls == []
+
+
+def test_config_error_alerts_once_and_marks_the_exception(
+    needs_key: type[NeedsKeySource],
+) -> None:
+    alerts = Alerts()
+    with pytest.raises(MissingConfigError) as exc:
+        cli.run_source(
+            "job_posting", settings=Settings(_env_file=None), repo=MemoryRepository(),
+            dry_run=False, notify=alerts,
+        )  # fmt: skip
+    assert alerts.calls == [("job_posting", "failed", 1)]
+    assert getattr(exc.value, "alerted", False)
+
+
+class FakeNotifier:
+    instances: ClassVar[list["FakeNotifier"]] = []
+
+    def __init__(self) -> None:
+        self.alerts = Alerts()
+        FakeNotifier.instances.append(self)
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "FakeNotifier":
+        return cls()
+
+    def run_finished(self, source: str, status: str, stats: Any) -> None:
+        self.alerts(source, status, stats)
+
+
+@pytest.fixture
+def notifier(monkeypatch: pytest.MonkeyPatch) -> type[FakeNotifier]:
+    FakeNotifier.instances = []
+    monkeypatch.setattr(cli, "SlackNotifier", FakeNotifier)
+    return FakeNotifier
+
+
+def test_failure_before_the_run_starts_still_alerts(notifier: type[FakeNotifier]) -> None:
+    # No Supabase credentials: the run never starts (as with missing GitHub secrets).
+    assert cli.main(["run", "job_posting"]) == 2
+    (instance,) = notifier.instances
+    assert instance.alerts.calls == [("job_posting", "failed", 1)]
+
+
+def test_failure_inside_the_run_is_not_alerted_twice(
+    notifier: type[FakeNotifier], needs_key: type[NeedsKeySource], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "build_repository", lambda settings, dry_run: MemoryRepository())
+    assert cli.main(["run", "job_posting"]) == 2  # APIFY_TOKEN missing
+    (instance,) = notifier.instances
+    assert instance.alerts.calls == [("job_posting", "failed", 1)]
+
+
+def test_dry_run_cli_builds_no_notifier(notifier: type[FakeNotifier]) -> None:
+    assert cli.main(["run", "fixture", "--dry-run", "--no-ai"]) == 0
+    assert notifier.instances == []
+
+
+def test_summary_needs_supabase_and_slack() -> None:
+    assert cli.main(["summary", "--dry-run"]) == 2  # no Supabase credentials

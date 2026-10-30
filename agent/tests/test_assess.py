@@ -31,7 +31,7 @@ class Spend:
 
 
 def test_prompts_load_with_company_profile() -> None:
-    for name in ("score_v1", "draft_v1"):
+    for name in ("score_v1", "score_v2", "draft_v1"):
         text = load_prompt(name)
         assert "{company_profile}" not in text
         assert "5+ years building on Bubble.io" in text
@@ -60,7 +60,7 @@ def test_new_lead_is_extracted_scored_and_drafted() -> None:
     assert result.outreach and result.outreach.draft_body.endswith(SIGN_OFF)
     assert result.signal.metadata["ai_prompts"] == {
         "extract": "extract_v1",
-        "score": "score_v1",
+        "score": "score_v2",
         "draft": "draft_v1",
     }
     # The draft prompt sees the score, the pain point and who to address.

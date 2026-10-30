@@ -3,6 +3,7 @@ derived from these models; constraints the API can't express (score range,
 word limit, no links) are checked here after the response arrives."""
 
 import re
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -54,3 +55,41 @@ class Draft(BaseModel):
         if _URL.search(value):
             raise ValueError("body must not contain links in the first email")
         return value.strip()
+
+
+# Rounds as stored in leads.funding_round and listed in source_configs "rounds".
+FundingRound = Literal[
+    "pre-seed", "seed", "series a", "series b", "series c+", "grant", "debt", "other"
+]  # fmt: skip
+
+
+class Founder(BaseModel):
+    name: str = Field(description="Full name as written in the article.")
+    role: str | None = Field(description="Role at the company, e.g. 'CEO and co-founder'.")
+
+
+class FundingExtraction(BaseModel):
+    """One company's funding round, read from a news article."""
+
+    is_single_announcement: bool = Field(
+        description="True only if the article announces a funding round raised by one "
+        "specific company. False for roundups of several companies, fund launches, "
+        "acquisitions, IPOs, and opinion or analysis pieces."
+    )
+    company_name: str | None = Field(description="The company that raised the money.")
+    website: str | None = Field(
+        description="The company's own website exactly as linked or written in the "
+        "article. Null if the article doesn't give it; never guess."
+    )
+    round: FundingRound | None = Field(description="Funding round as stated in the article.")
+    amount: float | None = Field(description="Amount raised as a plain number, e.g. 5000000.")
+    currency: str | None = Field(description="ISO 4217 code of the amount, e.g. 'USD', 'EUR'.")
+    investors: list[str] = Field(description="Investors named in the article.")
+    founders: list[Founder] = Field(
+        description="Founders or executives of the company named in the article."
+    )
+    industry: str | None = Field(description="Short industry label, e.g. 'fintech'.")
+    country: str | None = Field(description="Country of the company's headquarters.")
+    city: str | None = Field(description="City of the company's headquarters.")
+    description: str | None = Field(description="One sentence on what the company does.")
+    tech_stack: list[str] = Field(description="Technologies the article says the company uses.")

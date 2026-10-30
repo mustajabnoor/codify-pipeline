@@ -1,0 +1,32 @@
+name: Daily summary
+
+on:
+  schedule:
+    - cron: "15 4 * * *" # 09:15 Asia/Karachi, after the morning source runs
+  workflow_dispatch:
+
+concurrency:
+  group: daily-summary
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  summary:
+    name: Post daily summary to Slack
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked --no-dev
+      - name: Post summary
+        run: uv run --no-dev python -m agent summary

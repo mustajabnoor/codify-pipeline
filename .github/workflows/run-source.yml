@@ -1,0 +1,38 @@
+# Shared job for the per-source workflows (job-posting.yml, funding.yml, ...).
+# Each caller sets the schedule; this file holds the steps and secrets.
+name: Run source (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      source:
+        description: Source name, as in `python -m agent sources`
+        type: string
+        required: true
+      dry_run:
+        description: No database writes; print would-be leads in the log
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: Run ${{ inputs.source }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked --no-dev
+      - name: Run
+        run: uv run --no-dev python -m agent run "${{ inputs.source }}" ${{ inputs.dry_run && '--dry-run' || '' }}

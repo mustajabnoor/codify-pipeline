@@ -45,6 +45,12 @@ uv run python -m agent run fixture --dry-run
 uv run python -m agent run job_posting --dry-run
 ```
 
+```bash
+uv run python -m agent run funding --dry-run
+```
+
+The funding source needs AI to read articles, so it can't run with `--no-ai`.
+
 New leads are extracted, scored and drafted by Claude (see CLAUDE.md §6). That
 needs `ANTHROPIC_API_KEY` (or `CODIFY_ANTHROPIC_API_KEY`); real runs fail without
 it, dry runs skip AI. Add `--no-ai` to a dry run to skip it on purpose. Cost is
@@ -68,6 +74,23 @@ Checks (same as CI):
 
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run pytest
+```
+
+## Scheduled runs (GitHub Actions)
+
+Job postings run at 08:00 and funding news at 08:30 Pakistan time, and a Slack
+summary follows at 09:15 (see CLAUDE.md §9). Failed or partial runs post a Slack
+alert. To run a source by hand: GitHub → **Actions** → pick the workflow →
+**Run workflow** (tick *dry_run* to write nothing).
+
+The workflows need these repository secrets (Settings → Secrets and variables
+→ Actions), with **pipeline-prod** values: `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `SLACK_WEBHOOK_URL`.
+
+Preview the daily summary without posting it:
+
+```bash
+uv run python -m agent summary --dry-run
 ```
 
 ## Database

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
@@ -17,6 +18,9 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     for field in Settings.model_fields:
         monkeypatch.delenv(field.upper(), raising=False)
     monkeypatch.delenv("CODIFY_ANTHROPIC_API_KEY", raising=False)
+    # CI runs inside GitHub Actions; Slack messages link the run when these are set.
+    for name in ("GITHUB_SERVER_URL", "GITHUB_REPOSITORY", "GITHUB_RUN_ID"):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir(tmp_path)
 
 
@@ -48,11 +52,18 @@ FAKE_USAGE = Usage(tokens=100, cost=Decimal("0.01"))
 
 class FakeAI:
     """Stands in for ClaudeAI: canned output per task, records each call.
-    `fail` maps a task to the exception it raises."""
+    `fail` maps a task to the exception it raises; `answers` maps a task to a
+    function of the user prompt returning the output (overrides the canned one)."""
 
-    def __init__(self, score: int = 7, fail: dict[str, Exception] | None = None) -> None:
+    def __init__(
+        self,
+        score: int = 7,
+        fail: dict[str, Exception] | None = None,
+        answers: dict[str, Callable[[str], BaseModel]] | None = None,
+    ) -> None:
         self.score = score
         self.fail = fail or {}
+        self.answers = answers or {}
         self.calls: list[tuple[str, str]] = []  # (task, user prompt)
 
     def structured(
@@ -61,6 +72,10 @@ class FakeAI:
         self.calls.append((task, user))
         if task in self.fail:
             raise self.fail[task]
+        if task in self.answers:
+            answer = self.answers[task](user)
+            assert isinstance(answer, output)
+            return answer, FAKE_USAGE
         canned: dict[str, BaseModel] = {
             "extract": Extraction(
                 industry="saas",

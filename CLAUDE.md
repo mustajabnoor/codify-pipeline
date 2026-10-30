@@ -59,7 +59,7 @@ README.md
 | # | Source | Buying signal | How to collect | Cadence |
 |---|---|---|---|---|
 | 1 | **Job postings** | Company hiring a Bubble / Shopify / React / full-stack / mobile developer | RemoteOK JSON API (its RSS is gone), We Work Remotely RSS, Apify job scrapers (LinkedIn Jobs, Indeed), Wellfound | Daily |
-| 2 | **Funding news** | Startup just raised pre-seed / seed / Series A | Funding-news RSS feeds; Claude extracts company, amount, round, founder | Daily |
+| 2 | **Funding news** | Startup just raised pre-seed / seed / Series A | Full-text funding-news RSS (EU-Startups, Tech Funding News, Crunchbase News); Claude extracts company, website, amount, round, founders | Daily |
 | 3 | **Social listening** | Public post asking for a developer/agency or describing a broken app | Reddit API (r/forhire, r/startups, r/SaaS, r/Entrepreneur, r/Bubble, r/lovable, r/SideProject), F5Bot alerts, Indie Hackers | Every 4 hours |
 | 4 | **Tech-stack detection** | Site on Bubble / Shopify / WordPress that is slow or broken | BuiltWith / Wappalyzer / Store Leads lists + Google PageSpeed Insights API | Weekly batch |
 | 5 | **Google Maps** | Local business with no website or a broken/outdated one | Google Places API or Apify Google Maps scraper, by city + category | Weekly |
@@ -82,6 +82,8 @@ collect → normalize → dedupe → enrich (decision-maker + email) → verify 
 - **Every run** writes a row to `agent_runs` with counts and errors.
 - **Every collector supports `--dry-run`** (no DB writes, prints what it would insert as JSON lines; reads Supabase for dedupe when credentials are set).
 - **Company domain from text:** collectors whose source gives no website (job boards) take the company's domain from links in the post, accepting only hosts that contain the company name (`company_domain_from_text` in `agent/core/normalize.py`). When unsure it returns none: a wrong domain would merge two companies.
+- **Domain-less duplicates are accepted:** the same company reported by two sources without a domain (e.g. a funding round covered by two outlets, one without a company link) becomes two leads; merge or reject them in the dashboard. Matching by company name was considered and rejected (risk of merging different companies).
+- **Funding news:** a website counts only if the article itself shows it (`verified_domain` in `agent/sources/funding.py`). Rounds kept: those in `rounds`, plus unnamed rounds up to `unnamed_round_max`. `funding_amount` is stored only for USD; other currencies stay in the signal's metadata. FinSMEs blocks automated requests, so it isn't used.
 - **Domain normalization** drops platform hosts (reddit.com, linkedin.com, github.com, producthunt.com, job-board / ATS hosts like greenhouse.io, …) so a link to them never becomes a company domain; customer subdomains on hosting platforms (`acme.myshopify.com`) are kept. List lives in `agent/core/normalize.py`.
 
 ## 6. AI steps (Claude API)
@@ -106,7 +108,8 @@ Implementation (`agent/ai/`):
 - Real runs require the Anthropic key. Dry runs skip AI when there's no key or with `--no-ai`.
 - Proof points: drafts may only cite what is in `agent/ai/prompts/company_profile.md`; keep that file current.
 - The sign-off and opt-out line (`SIGN_OFF` in `agent/core/models.py`) are appended by code to every draft and don't count toward the 100 words.
-- Changing a prompt: add a new version file (`score_v2.md`) and bump the constant in `agent/ai/assess.py`; each signal records the prompt versions in `metadata.ai_prompts`.
+- Sources that need AI to read their items (`needs_ai`, e.g. funding news) extract with their own prompt (`funding_extract_v1`, Haiku) before dedupe, skip article URLs already stored, and cap reads per run (`max_articles`). The generic extract step is then skipped. These sources can't run with `--no-ai`.
+- Changing a prompt: add a new version file (`score_v3.md`) and bump the constant in `agent/ai/assess.py`; each signal records the prompt versions in `metadata.ai_prompts`.
 
 ## 7. Database (Supabase / Postgres)
 
@@ -156,6 +159,20 @@ Screens:
 
 One workflow per source in `.github/workflows/`, each runnable manually (`workflow_dispatch`) and on cron (times in UTC; team is UTC+5). Secrets live in GitHub Actions secrets. Add a CI workflow for lint (ruff, eslint) and tests (pytest) on every PR.
 
+Current schedule (cron in UTC → Asia/Karachi):
+
+| Workflow | Cron | PKT | Command |
+|---|---|---|---|
+| `job-posting.yml` | `0 3 * * *` | 08:00 | `python -m agent run job_posting` |
+| `funding.yml` | `30 3 * * *` | 08:30 | `python -m agent run funding` |
+| `daily-summary.yml` | `15 4 * * *` | 09:15 | `python -m agent summary` |
+
+- Source workflows call the shared `run-source.yml` (`workflow_call`); a new source only needs a small caller file with its cron and a `concurrency` group. Manual runs have a `dry_run` checkbox.
+- **GitHub cron is the source of truth** for when a source runs; `source_configs.schedule` is informational until the dashboard's "Run now" (Phase 3) triggers workflows. `enabled = false` in `source_configs` still makes a scheduled run a no-op.
+- Required GitHub Actions secrets (prod values): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `SLACK_WEBHOOK_URL`. Add the enrichment keys when 2.3 lands.
+- **Slack alerts** (`agent/core/slack.py`): a real run that ends `failed` or `partial` (or can't start, e.g. missing secrets) posts one alert with counts, the first 5 errors and a link to the Actions run. Successful and dry runs post nothing. Posting never raises, and the webhook URL is never logged.
+- **Daily summary** (`agent/summary.py`): new leads in the last 24h per source, 8+ count, auto-rejected count, top 5 leads, last run per enabled source (flagged when a source hasn't run in 26h), follow-ups due and AI cost. A quiet day still posts, so silence means the summary itself failed. `python -m agent summary --dry-run` prints the message instead of posting it.
+
 ## 10. Environment variables (document all in `.env.example`, never commit real values)
 
 ```
@@ -198,9 +215,9 @@ Two dev and prod Supabase projects exist: **pipeline-dev** (Claude Code cloud se
 - **Phase 2 — First sources:** Job postings + Funding news end-to-end (collect → enrich → score → draft → save), GitHub Actions crons, Slack daily summary.
   - 2.1 Job postings collector (RemoteOK + WWR), HTTP retry helper (done)
   - 2.2 AI layer: score + draft (+ extract), token/cost logging, `outreach` draft rows (done)
-  - 2.3 Enrichment: Hunter + MillionVerifier
-  - 2.4 Funding news collector
-  - 2.5 Cron workflows per source, Slack alerts + daily summary
+  - 2.3 Enrichment: Hunter + MillionVerifier (blocked: both API keys are rejected; fix them in the cloud environment settings and GitHub secrets)
+  - 2.4 Funding news collector (done)
+  - 2.5 Cron workflows per source, Slack alerts + daily summary (done)
   - Live runs are allowed once 2.2 is merged; crons come in 2.5. Apify job actors and Wellfound come after 2.5.
 - **Phase 3 — Dashboard v1:** auth, Today, Leads list (filters + export), Lead detail (approve/edit), Agent health. Deploy to Vercel on `pipeline.codify-labs.com`.
 - **Phase 4 — More sources:** Social listening, Product launches, then Google Maps, Tech-stack, Agency partners.

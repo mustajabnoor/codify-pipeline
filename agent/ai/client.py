@@ -36,6 +36,7 @@ class TaskSpec:
 # Cheap model for extraction, the stronger one for judgment and writing (CLAUDE.md §6).
 TASKS = {
     "extract": TaskSpec(HAIKU, "low", 8000, fallbacks=False),
+    "funding_extract": TaskSpec(HAIKU, "low", 8000, fallbacks=False),
     "score": TaskSpec(OPUS, "medium", 16000, fallbacks=True),
     "draft": TaskSpec(OPUS, "medium", 16000, fallbacks=True),
 }

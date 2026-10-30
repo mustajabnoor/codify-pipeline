@@ -7,7 +7,7 @@ import anthropic
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from agent.ai.schemas import Assessment, Draft, Extraction
+from agent.ai.schemas import Assessment, Draft, Extraction, FundingExtraction
 from agent.core.models import SIGN_OFF, LeadAssessment, OutreachDraft
 
 from .conftest import make_candidate
@@ -103,7 +103,7 @@ def _walk(schema: Any) -> list[dict[str, Any]]:
     return []
 
 
-@pytest.mark.parametrize("model", [Extraction, Assessment, Draft])
+@pytest.mark.parametrize("model", [Extraction, Assessment, Draft, FundingExtraction])
 def test_api_schema_is_strict(model: type[BaseModel]) -> None:
     """Structured outputs need additionalProperties: false on every object and
     reject numeric/length constraints; those must be checked client-side."""
@@ -134,3 +134,37 @@ def test_draft_body_always_ends_with_sign_off() -> None:
     outreach = OutreachDraft(channel="email", subject="s", body="Hi, worth a look?  ")
     assert outreach.draft_body == f"Hi, worth a look?\n\n{SIGN_OFF}"
     assert "Not relevant? Reply 'no'" in outreach.draft_body
+
+
+def funding(**overrides: Any) -> str:
+    base: dict[str, Any] = {
+        "is_single_announcement": True,
+        "company_name": "Acme AI",
+        "website": None,
+        "round": "seed",
+        "amount": 3000000,
+        "currency": "USD",
+        "investors": [],
+        "founders": [{"name": "Jane Roe", "role": "CEO"}],
+        "industry": None,
+        "country": None,
+        "city": None,
+        "description": None,
+        "tech_stack": [],
+    }
+    return json.dumps({**base, **overrides})
+
+
+def test_funding_extraction_parses() -> None:
+    parsed = FundingExtraction.model_validate_json(funding())
+    assert (parsed.round, parsed.amount, parsed.founders[0].name) == ("seed", 3000000, "Jane Roe")
+    roundup = FundingExtraction.model_validate_json(
+        funding(is_single_announcement=False, company_name=None, round=None, amount=None)
+    )
+    assert roundup.company_name is None
+
+
+@pytest.mark.parametrize("bad", [{"round": "series z"}, {"round": "Seed"}, {"founders": None}])
+def test_funding_extraction_rejects(bad: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        FundingExtraction.model_validate_json(funding(**bad))
