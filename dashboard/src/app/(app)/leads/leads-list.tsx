@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 
 import { EmailDot, ScoreBadge, StatusBadge } from "@/components/lead-badges";
@@ -111,7 +112,9 @@ export function LeadsList({ leads }: { leads: ListLead[] }) {
             <div className="min-w-0 flex-1 space-y-1">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate font-medium">{lead.company_name}</p>
+                  <Link href={`/leads/${lead.id}`} className="block truncate font-medium hover:underline">
+                    {lead.company_name}
+                  </Link>
                   <p className="truncate text-xs text-muted-foreground">
                     {[lead.domain, SOURCE_LABELS[lead.first_source], lead.country].filter(Boolean).join(" · ")}
                   </p>
@@ -155,7 +158,9 @@ export function LeadsList({ leads }: { leads: ListLead[] }) {
                   />
                 </TableCell>
                 <TableCell className="max-w-64">
-                  <p className="truncate font-medium">{lead.company_name}</p>
+                  <Link href={`/leads/${lead.id}`} className="block truncate font-medium hover:underline">
+                    {lead.company_name}
+                  </Link>
                   <p className="truncate text-xs text-muted-foreground">{lead.domain}</p>
                 </TableCell>
                 <TableCell>

@@ -64,3 +64,31 @@ const PKT_DATE = new Intl.DateTimeFormat("en-GB", {
 export function formatDate(iso: string | null | undefined): string {
   return iso ? PKT_DATE.format(new Date(iso)) : "";
 }
+
+const PKT_DATE_TIME = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Karachi",
+  day: "2-digit",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+/** Date and time as the team sees it (Asia/Karachi), e.g. "30 Oct, 14:05". */
+export function formatDateTime(iso: string | null | undefined): string {
+  return iso ? PKT_DATE_TIME.format(new Date(iso)) : "";
+}
+
+// Follow-up dates are picked as a day; they're stored as 09:00 that day in Karachi.
+const FOLLOW_UP_HOUR_PKT = "09:00:00+05:00";
+
+/** "2026-11-02" (a date input) → ISO timestamp for 09:00 that day in Karachi. */
+export function dateInputToIso(day: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const date = new Date(`${day}T${FOLLOW_UP_HOUR_PKT}`);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+/** ISO timestamp → "YYYY-MM-DD" in Karachi, for a date input's value. */
+export function isoToDateInput(iso: string | null | undefined): string {
+  return iso ? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Karachi" }).format(new Date(iso)) : "";
+}

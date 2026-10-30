@@ -168,6 +168,7 @@ Implementation (`dashboard/`, details in `dashboard/README.md`):
 - Sign-in: email magic link or the 6-digit code from the same email. The form never creates accounts (`shouldCreateUser: false`); users are added in Supabase Auth and `team_members`.
 - Changes go through Server Actions that write an `activities` row with `actor` = the user's email.
 - Leads list (`src/app/(app)/leads/`): filters live in the URL (`src/lib/leads/filters.ts`) and one query builder serves the list and the export (`src/lib/leads/query.ts`). Bulk approve/reject only changes leads still in `new` / `reviewing` (others count as skipped); approving also sets the lead's `draft` outreach to `approved`. Nothing is sent.
+- Lead detail (`/leads/[id]`): approving (any status) also approves the lead's draft, saving unsaved edits first; the status menu sets any status. Draft edits go to `outreach.final_body` (`draft_body` keeps the AI's original); the sign-off with the opt-out line is shown read-only and always re-appended by code (`src/lib/outreach.ts` mirrors `SIGN_OFF`, and a test checks they match). Only `draft` / `approved` outreach can be edited. Follow-up dates are picked as a day and stored as 09:00 Asia/Karachi.
 - Export (`/leads/export?format=xlsx|csv&<filters>`): all matching leads up to 5,000, one row per lead with the primary contact and the latest draft (edited `final_body` if any, else `draft_body`). CSV neutralises cells that spreadsheets would run as formulas. `.xlsx` uses exceljs (its old `uuid` is overridden in `package.json`).
 - `src/lib/database.types.ts` is generated from the migrations (`npm run gen:types`); CI fails when it's stale.
 - shadcn/ui components are in `src/components/ui` (new-york style). The shadcn registry (ui.shadcn.com) is blocked in Claude Code cloud sessions, so components there are copied from the shadcn GitHub repo.
@@ -239,7 +240,7 @@ Two dev and prod Supabase projects exist: **pipeline-dev** (Claude Code cloud se
 - **Phase 3 — Dashboard v1:** auth, Today, Leads list (filters + export), Lead detail (approve/edit), Agent health. Deploy to Vercel on `pipeline.codify-labs.com`.
   - 3.1 Scaffold, sign-in (magic link + code), team-only access, app shell, PWA manifest, CI job (done)
   - 3.2 Leads list: filters in the URL, bulk approve/reject, .xlsx/.csv export (done)
-  - 3.3 Lead detail: contacts, signals, editable draft, approve/reject/status, notes, timeline
+  - 3.3 Lead detail: contacts, signals, editable draft, approve/reject/status, notes, timeline (done)
   - 3.4 Today KPIs + Agent health
   - 3.5 Vercel deploy (owner sets env vars, domain and Supabase Auth URLs)
 - **Phase 4 — More sources:** Social listening, Product launches, then Google Maps, Tech-stack, Agency partners.
