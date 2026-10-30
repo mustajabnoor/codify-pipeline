@@ -59,3 +59,61 @@ jobs:
           for f in supabase/migrations/*.sql; do run "$f"; done
           run supabase/seed.sql
           run supabase/tests/rls_smoke.sql
+
+  dashboard:
+    name: Dashboard (eslint + tsc + vitest + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # Placeholders: the build never calls Supabase.
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: dashboard/.nvmrc
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: No service-role key in the dashboard
+        run: |
+          if grep -rnE "SUPABASE_SERVICE_ROLE_KEY|service_role" src; then
+            echo "::error::The dashboard must only use the anon key (CLAUDE.md §11)"
+            exit 1
+          fi
+      - name: ESLint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: Database types match the migrations
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: postgres
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -q -f ../supabase/tests/ci_bootstrap.sql
+          for f in ../supabase/migrations/*.sql; do psql -v ON_ERROR_STOP=1 -q -f "$f"; done
+          npm run gen:types
+          git diff --exit-code src/lib/database.types.ts || {
+            echo "::error::src/lib/database.types.ts is stale: run npm run gen:types (see dashboard/README.md)"
+            exit 1
+          }
