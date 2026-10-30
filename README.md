@@ -16,7 +16,7 @@ agent/        Python collector (python -m agent run <source> [--dry-run])
   enrich/     contact finding (Hunter) + email verification (MillionVerifier)
   ai/         Claude client, versioned prompts, extract -> score -> draft
   tests/
-dashboard/    Next.js app (Phase 3)
+dashboard/    Next.js app: lead review (see dashboard/README.md)
 supabase/     migrations (schema source of truth), seed.sql, tests/ (CI only)
 .github/      CI + per-source cron workflows
 ```
@@ -101,6 +101,15 @@ Preview the daily summary without posting it:
 
 ```bash
 uv run python -m agent summary --dry-run
+```
+
+## Dashboard
+
+Next.js app in `dashboard/` (Node 22). Setup, sign-in and the Supabase Auth
+settings it needs are in [dashboard/README.md](dashboard/README.md).
+
+```bash
+cd dashboard && npm install && npm run dev
 ```
 
 ## Database

@@ -29,7 +29,7 @@ An agent runs on a schedule, watches the web for **buying signals** (someone who
 | Agent / collectors | **Python 3.12** (managed with **uv**), `httpx`, `pydantic`, `supabase` client, `playwright` (only where a real browser is needed) |
 | AI | **Claude API** (Anthropic Python SDK) for extraction, scoring, message drafting |
 | Database + auth | **Supabase** (Postgres, Supabase Auth, Row Level Security) |
-| Dashboard | **Next.js (App Router) + TypeScript + Tailwind + shadcn/ui**, hosted on **Vercel** at `pipeline.codify-labs.com` |
+| Dashboard | **Next.js (App Router) + TypeScript + Tailwind + shadcn/ui**, hosted on **Vercel** at `pipeline.codify-labs.com`; npm, Node 22, exact versions pinned |
 | Scheduling | **GitHub Actions** cron workflows (one workflow per source) |
 | Alerts | **Slack** — daily summary + run alerts via an Incoming Webhook (phase 2); `/run <source>` slash command via a dashboard API route that triggers the source's GitHub workflow (phase 3) |
 | Email sending | Not built in. Approved leads are exported/pushed to **Instantly or Smartlead** — phase 4 |
@@ -162,6 +162,14 @@ Screens:
 7. **Agent health** — last run per source, status, leads found, errors, token cost.
 8. **Do-not-contact** — add/remove entries.
 
+Implementation (`dashboard/`, details in `dashboard/README.md`):
+- Next.js 16 with **Cache Components** on (it becomes the default in the next major). Pages render a static frame and stream user data behind `<Suspense>`; never read cookies or the session at the top of a layout. Next's bundled docs (`node_modules/next/dist/docs/`) are the reference; this version differs from older Next.js.
+- Supabase via `@supabase/ssr` with the **anon key only**; every query runs as the signed-in user under RLS. `src/proxy.ts` refreshes the session and sends signed-out visitors to `/login`. `requireMember()` (`src/lib/auth.ts`) checks `is_team_member()` and sends other accounts to `/no-access`; every page and Server Action calls it.
+- Sign-in: email magic link or the 6-digit code from the same email. The form never creates accounts (`shouldCreateUser: false`); users are added in Supabase Auth and `team_members`.
+- Changes go through Server Actions that write an `activities` row with `actor` = the user's email.
+- `src/lib/database.types.ts` is generated from the migrations (`npm run gen:types`); CI fails when it's stale.
+- shadcn/ui components are in `src/components/ui` (new-york style). The shadcn registry (ui.shadcn.com) is blocked in Claude Code cloud sessions, so components there are copied from the shadcn GitHub repo.
+
 ## 9. Scheduling (GitHub Actions)
 
 One workflow per source in `.github/workflows/`, each runnable manually (`workflow_dispatch`) and on cron (times in UTC; team is UTC+5). Secrets live in GitHub Actions secrets. Add a CI workflow for lint (ruff, eslint) and tests (pytest) on every PR.
@@ -227,6 +235,11 @@ Two dev and prod Supabase projects exist: **pipeline-dev** (Claude Code cloud se
   - 2.5 Cron workflows per source, Slack alerts + daily summary (done)
   - Live runs are allowed once 2.2 is merged; crons come in 2.5. Apify job actors and Wellfound come after 2.5.
 - **Phase 3 — Dashboard v1:** auth, Today, Leads list (filters + export), Lead detail (approve/edit), Agent health. Deploy to Vercel on `pipeline.codify-labs.com`.
+  - 3.1 Scaffold, sign-in (magic link + code), team-only access, app shell, PWA manifest, CI job (done)
+  - 3.2 Leads list: filters in the URL, bulk approve/reject, .xlsx/.csv export
+  - 3.3 Lead detail: contacts, signals, editable draft, approve/reject/status, notes, timeline
+  - 3.4 Today KPIs + Agent health
+  - 3.5 Vercel deploy (owner sets env vars, domain and Supabase Auth URLs)
 - **Phase 4 — More sources:** Social listening, Product launches, then Google Maps, Tech-stack, Agency partners.
 - **Phase 5 — Outreach:** push approved leads to Instantly/Smartlead, reply import + AI reply categorization, follow-up reminders, source performance view.
 
