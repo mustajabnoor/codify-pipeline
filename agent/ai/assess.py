@@ -21,6 +21,8 @@ DRAFT_PROMPT = "draft_v1"
 TEXT_LIMIT = 6000
 
 UsageRecorder = Callable[[int, Decimal], None]
+# Adds a contact to a scored candidate (agent/enrich/enricher.py).
+Enrich = Callable[[LeadCandidate], LeadCandidate]
 # Signal metadata that is bookkeeping, not information about the lead.
 _BRIEF_SKIP = frozenset({"ai_prompts", "feed"})
 T = TypeVar("T", bound=BaseModel)
@@ -122,9 +124,12 @@ class Assessor:
     become a new lead; sources that must read their items with AI first (e.g.
     funding news) call `run` directly."""
 
-    def __init__(self, ai: AIClient, record_usage: UsageRecorder) -> None:
+    def __init__(
+        self, ai: AIClient, record_usage: UsageRecorder, enrich: Enrich | None = None
+    ) -> None:
         self.ai = ai
         self._record = record_usage
+        self.enrich = enrich
         self._prompts: dict[str, str] = {}
 
     def run(self, task: str, prompt: str, user: str, output: type[T]) -> T:
@@ -150,8 +155,13 @@ class Assessor:
             prompts["extract"] = EXTRACT_PROMPT
         assessment = self.run("score", SCORE_PROMPT, lead_brief(candidate), Assessment)
         prompts["score"] = SCORE_PROMPT
+        candidate = candidate.model_copy(update={"assessment": assessment})
         outreach = None
         if not assessment.is_reject:
+            # Between scoring and drafting: rejects cost no lookup credits, and
+            # the draft can address the contact found.
+            if self.enrich:
+                candidate = self.enrich(candidate)
             draft = self.run("draft", DRAFT_PROMPT, draft_brief(candidate, assessment), Draft)
             outreach = OutreachDraft(
                 channel=draft.best_channel, subject=draft.subject, body=draft.body
@@ -160,6 +170,4 @@ class Assessor:
         signal = candidate.signal.model_copy(
             update={"metadata": {**candidate.signal.metadata, "ai_prompts": prompts}}
         )
-        return candidate.model_copy(
-            update={"signal": signal, "assessment": assessment, "outreach": outreach}
-        )
+        return candidate.model_copy(update={"signal": signal, "outreach": outreach})

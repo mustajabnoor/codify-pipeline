@@ -1,0 +1,73 @@
+{
+  "data": {
+    "domain": "acme.com",
+    "disposable": false,
+    "webmail": false,
+    "accept_all": false,
+    "pattern": "{first}",
+    "organization": "Acme",
+    "emails": [
+      {
+        "value": "info@acme.com",
+        "type": "generic",
+        "confidence": 92,
+        "sources": [],
+        "first_name": null,
+        "last_name": null,
+        "position": null,
+        "seniority": null,
+        "department": null,
+        "linkedin": null,
+        "twitter": null,
+        "phone_number": null,
+        "verification": {"date": null, "status": null}
+      },
+      {
+        "value": "sam@acme.com",
+        "type": "personal",
+        "confidence": 95,
+        "sources": [],
+        "first_name": "Sam",
+        "last_name": "Ortiz",
+        "position": "Senior Software Engineer",
+        "seniority": "senior",
+        "department": "it",
+        "linkedin": null,
+        "twitter": null,
+        "phone_number": null,
+        "verification": {"date": "2026-09-01", "status": "valid"}
+      },
+      {
+        "value": "dana@acme.com",
+        "type": "personal",
+        "confidence": 88,
+        "sources": [],
+        "first_name": "Dana",
+        "last_name": "Lee",
+        "position": "Co-Founder & CEO",
+        "seniority": "executive",
+        "department": "executive",
+        "linkedin": "https://www.linkedin.com/in/dana-lee-example",
+        "twitter": "danalee",
+        "phone_number": null,
+        "verification": {"date": "2026-09-01", "status": "valid"}
+      },
+      {
+        "value": "lee@partner-agency.com",
+        "type": "personal",
+        "confidence": 60,
+        "sources": [],
+        "first_name": "Lee",
+        "last_name": "Park",
+        "position": "Founder",
+        "seniority": "executive",
+        "department": "executive",
+        "linkedin": null,
+        "twitter": null,
+        "phone_number": null,
+        "verification": {"date": null, "status": null}
+      }
+    ]
+  },
+  "meta": {"results": 4, "limit": 10, "offset": 0, "params": {"domain": "acme.com"}}
+}
