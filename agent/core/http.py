@@ -4,6 +4,7 @@ import logging
 import time
 from collections.abc import Callable
 from email.utils import parsedate_to_datetime
+from typing import Any
 
 import httpx
 
@@ -39,25 +40,33 @@ def _retry_after(response: httpx.Response) -> float | None:
     return min(max(seconds, 0.0), MAX_RETRY_AFTER)
 
 
-def get_with_retry(
+def request_with_retry(
     client: httpx.Client,
+    method: str,
     url: str,
     *,
     params: dict[str, str] | None = None,
+    json: Any = None,
+    label: str | None = None,
     attempts: int = MAX_ATTEMPTS,
-    sleep: Callable[[float], None] = time.sleep,
+    sleep: Callable[[float], None] | None = None,
 ) -> httpx.Response:
-    """GET with exponential backoff (1s, 2s, 4s...) on network errors, 429 and
-    5xx; honors Retry-After. Raises httpx.HTTPError once attempts run out or
-    on any other non-2xx status."""
+    """Request with exponential backoff (1s, 2s, 4s...) on network errors, 429
+    and 5xx; honors Retry-After. Raises httpx.HTTPError once attempts run out
+    or on any other non-2xx status. `label` replaces the URL in log lines (for
+    URLs that are secrets, like a Slack webhook)."""
+    shown = label or url
     for attempt in range(1, attempts + 1):
         delay = float(2 ** (attempt - 1))
         try:
-            response = client.get(url, params=params)
+            response = client.request(method, url, params=params, json=json)
         except httpx.TransportError as exc:
             if attempt == attempts:
                 raise
-            log.warning("GET %s failed (%s); retry %d in %.0fs", url, exc, attempt, delay)
+            log.warning(
+                "%s %s failed (%s); retry %d in %.0fs",
+                method, shown, type(exc).__name__, attempt, delay,
+            )  # fmt: skip
         else:
             if response.status_code not in RETRY_STATUS or attempt == attempts:
                 response.raise_for_status()
@@ -65,7 +74,19 @@ def get_with_retry(
             retry_after = _retry_after(response)
             delay = delay if retry_after is None else retry_after
             log.warning(
-                "GET %s returned %d; retry %d in %.0fs", url, response.status_code, attempt, delay
-            )
-        sleep(delay)
+                "%s %s returned %d; retry %d in %.0fs",
+                method, shown, response.status_code, attempt, delay,
+            )  # fmt: skip
+        (sleep or time.sleep)(delay)
     raise AssertionError("unreachable")
+
+
+def get_with_retry(
+    client: httpx.Client,
+    url: str,
+    *,
+    params: dict[str, str] | None = None,
+    attempts: int = MAX_ATTEMPTS,
+    sleep: Callable[[float], None] | None = None,
+) -> httpx.Response:
+    return request_with_retry(client, "GET", url, params=params, attempts=attempts, sleep=sleep)

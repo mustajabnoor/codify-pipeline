@@ -10,7 +10,9 @@ import json
 import logging
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any, Protocol, TextIO
 from uuid import UUID, uuid4
 
@@ -39,6 +41,49 @@ class Repository(DedupeLookup, Protocol):
     def finish_run(
         self, run_id: UUID | None, source: str, status: RunStatus, stats: RunStats
     ) -> None: ...
+
+
+@dataclass(frozen=True)
+class LeadDigest:
+    """A new lead as the daily summary shows it."""
+
+    company_name: str
+    domain: str | None
+    fit_score: int | None
+    status: str
+    first_source: str
+    pain_point: str | None
+    funding_round: str | None
+    created_at: datetime
+    signal_title: str | None = None
+    signal_url: str | None = None
+
+
+@dataclass(frozen=True)
+class RunDigest:
+    source: str
+    status: str
+    started_at: datetime
+    leads_new: int
+    errors: int
+    tokens_used: int
+    cost_estimate: Decimal
+
+
+class ReportReader(Protocol):
+    """Read-only queries for the daily summary."""
+
+    def recent_leads(self, since: datetime) -> list[LeadDigest]: ...
+
+    def recent_runs(self, since: datetime) -> list[RunDigest]: ...
+
+    def enabled_sources(self) -> list[str]: ...
+
+    def followups_due_count(self) -> int: ...
+
+
+def _ts(value: str | datetime) -> datetime:
+    return value if isinstance(value, datetime) else datetime.fromisoformat(value)
 
 
 def _activity(lead_id: UUID, type_: str, candidate: LeadCandidate) -> dict[str, Any]:
@@ -95,7 +140,7 @@ class MemoryRepository:
         if candidate.signal.source_url in self.signals:
             raise DuplicateSignalError(candidate.signal.source_url)
         lead_id = uuid4()
-        self.leads[lead_id] = candidate.lead_row()
+        self.leads[lead_id] = {**candidate.lead_row(), "created_at": datetime.now(UTC)}
         self.signals[candidate.signal.source_url] = candidate.signal_row(lead_id)
         contacts = [{**row, "id": str(uuid4())} for row in candidate.contact_rows(lead_id)]
         self.contacts.extend(contacts)
@@ -118,7 +163,11 @@ class MemoryRepository:
 
     def start_run(self, source: str) -> UUID | None:
         run_id = uuid4()
-        self.runs[run_id] = {"source": source, "status": RunStatus.RUNNING.value}
+        self.runs[run_id] = {
+            "source": source,
+            "status": RunStatus.RUNNING.value,
+            "started_at": datetime.now(UTC),
+        }
         return run_id
 
     def finish_run(
@@ -126,6 +175,60 @@ class MemoryRepository:
     ) -> None:
         if run_id is not None:
             self.runs[run_id].update(_run_row(status, stats))
+
+    def recent_leads(self, since: datetime) -> list[LeadDigest]:
+        digests = []
+        for lead_id, lead in self.leads.items():
+            if _ts(lead["created_at"]) < since:
+                continue
+            signals = sorted(
+                (s for s in self.signals.values() if s["lead_id"] == str(lead_id)),
+                key=lambda s: s["detected_at"],
+            )
+            first = signals[0] if signals else {}
+            digests.append(
+                LeadDigest(
+                    company_name=lead["company_name"],
+                    domain=lead.get("domain"),
+                    fit_score=lead.get("fit_score"),
+                    status=lead["status"],
+                    first_source=lead["first_source"],
+                    pain_point=lead.get("pain_point"),
+                    funding_round=lead.get("funding_round"),
+                    created_at=_ts(lead["created_at"]),
+                    signal_title=first.get("title"),
+                    signal_url=first.get("source_url"),
+                )
+            )
+        return digests
+
+    def recent_runs(self, since: datetime) -> list[RunDigest]:
+        return [
+            RunDigest(
+                source=run["source"],
+                status=run["status"],
+                started_at=_ts(run["started_at"]),
+                leads_new=run.get("leads_new", 0),
+                errors=len(run.get("errors", [])),
+                tokens_used=run.get("tokens_used", 0),
+                cost_estimate=Decimal(str(run.get("cost_estimate", 0))),
+            )
+            for run in self.runs.values()
+            if _ts(run["started_at"]) >= since
+        ]
+
+    def enabled_sources(self) -> list[str]:
+        return sorted({c.source.value for c in self.source_configs if c.enabled})
+
+    def followups_due_count(self) -> int:
+        now = datetime.now(UTC)
+        return sum(
+            1
+            for lead in self.leads.values()
+            if lead.get("next_follow_up_at")
+            and _ts(lead["next_follow_up_at"]) <= now
+            and lead["status"] not in ("won", "lost", "rejected")
+        )
 
 
 class DryRunRepository(MemoryRepository):
@@ -321,3 +424,63 @@ class SupabaseRepository:
             self._db.table("source_configs").update(
                 {"last_run_at": datetime.now(UTC).isoformat()}
             ).eq("source", source).eq("enabled", True).execute()
+
+    def recent_leads(self, since: datetime) -> list[LeadDigest]:
+        rows = (
+            self._db.table("leads")
+            .select(
+                "company_name, domain, fit_score, status, first_source, pain_point, "
+                "funding_round, created_at, signals(title, source_url, detected_at)"
+            )
+            .gte("created_at", since.isoformat())
+            .execute()
+            .data
+        )
+        digests = []
+        for row in rows:
+            signals = sorted(row.get("signals") or [], key=lambda s: s["detected_at"])
+            first = signals[0] if signals else {}
+            digests.append(
+                LeadDigest(
+                    company_name=row["company_name"],
+                    domain=row.get("domain"),
+                    fit_score=row.get("fit_score"),
+                    status=row["status"],
+                    first_source=row["first_source"],
+                    pain_point=row.get("pain_point"),
+                    funding_round=row.get("funding_round"),
+                    created_at=_ts(row["created_at"]),
+                    signal_title=first.get("title"),
+                    signal_url=first.get("source_url"),
+                )
+            )
+        return digests
+
+    def recent_runs(self, since: datetime) -> list[RunDigest]:
+        rows = (
+            self._db.table("agent_runs")
+            .select("source, status, started_at, leads_new, errors, tokens_used, cost_estimate")
+            .gte("started_at", since.isoformat())
+            .execute()
+            .data
+        )
+        return [
+            RunDigest(
+                source=row["source"],
+                status=row["status"],
+                started_at=_ts(row["started_at"]),
+                leads_new=row["leads_new"],
+                errors=len(row.get("errors") or []),
+                tokens_used=row["tokens_used"],
+                cost_estimate=Decimal(str(row["cost_estimate"])),
+            )
+            for row in rows
+        ]
+
+    def enabled_sources(self) -> list[str]:
+        rows = self._db.table("source_configs").select("source").eq("enabled", True).execute()
+        return sorted({row["source"] for row in rows.data})
+
+    def followups_due_count(self) -> int:
+        result = self._db.table("v_followups_due").select("id", count="exact").limit(1).execute()
+        return result.count or 0

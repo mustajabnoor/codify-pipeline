@@ -76,6 +76,23 @@ Checks (same as CI):
 uv run ruff check . && uv run ruff format --check . && uv run pytest
 ```
 
+## Scheduled runs (GitHub Actions)
+
+Job postings run at 08:00 and funding news at 08:30 Pakistan time, and a Slack
+summary follows at 09:15 (see CLAUDE.md §9). Failed or partial runs post a Slack
+alert. To run a source by hand: GitHub → **Actions** → pick the workflow →
+**Run workflow** (tick *dry_run* to write nothing).
+
+The workflows need these repository secrets (Settings → Secrets and variables
+→ Actions), with **pipeline-prod** values: `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `SLACK_WEBHOOK_URL`.
+
+Preview the daily summary without posting it:
+
+```bash
+uv run python -m agent summary --dry-run
+```
+
 ## Database
 
 Migrations live in `supabase/migrations` and are applied with the Supabase CLI:

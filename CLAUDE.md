@@ -159,6 +159,20 @@ Screens:
 
 One workflow per source in `.github/workflows/`, each runnable manually (`workflow_dispatch`) and on cron (times in UTC; team is UTC+5). Secrets live in GitHub Actions secrets. Add a CI workflow for lint (ruff, eslint) and tests (pytest) on every PR.
 
+Current schedule (cron in UTC → Asia/Karachi):
+
+| Workflow | Cron | PKT | Command |
+|---|---|---|---|
+| `job-posting.yml` | `0 3 * * *` | 08:00 | `python -m agent run job_posting` |
+| `funding.yml` | `30 3 * * *` | 08:30 | `python -m agent run funding` |
+| `daily-summary.yml` | `15 4 * * *` | 09:15 | `python -m agent summary` |
+
+- Source workflows call the shared `run-source.yml` (`workflow_call`); a new source only needs a small caller file with its cron and a `concurrency` group. Manual runs have a `dry_run` checkbox.
+- **GitHub cron is the source of truth** for when a source runs; `source_configs.schedule` is informational until the dashboard's "Run now" (Phase 3) triggers workflows. `enabled = false` in `source_configs` still makes a scheduled run a no-op.
+- Required GitHub Actions secrets (prod values): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `SLACK_WEBHOOK_URL`. Add the enrichment keys when 2.3 lands.
+- **Slack alerts** (`agent/core/slack.py`): a real run that ends `failed` or `partial` (or can't start, e.g. missing secrets) posts one alert with counts, the first 5 errors and a link to the Actions run. Successful and dry runs post nothing. Posting never raises, and the webhook URL is never logged.
+- **Daily summary** (`agent/summary.py`): new leads in the last 24h per source, 8+ count, auto-rejected count, top 5 leads, last run per enabled source (flagged when a source hasn't run in 26h), follow-ups due and AI cost. A quiet day still posts, so silence means the summary itself failed. `python -m agent summary --dry-run` prints the message instead of posting it.
+
 ## 10. Environment variables (document all in `.env.example`, never commit real values)
 
 ```
@@ -203,7 +217,7 @@ Two dev and prod Supabase projects exist: **pipeline-dev** (Claude Code cloud se
   - 2.2 AI layer: score + draft (+ extract), token/cost logging, `outreach` draft rows (done)
   - 2.3 Enrichment: Hunter + MillionVerifier (blocked: both API keys are rejected; fix them in the cloud environment settings and GitHub secrets)
   - 2.4 Funding news collector (done)
-  - 2.5 Cron workflows per source, Slack alerts + daily summary
+  - 2.5 Cron workflows per source, Slack alerts + daily summary (done)
   - Live runs are allowed once 2.2 is merged; crons come in 2.5. Apify job actors and Wellfound come after 2.5.
 - **Phase 3 — Dashboard v1:** auth, Today, Leads list (filters + export), Lead detail (approve/edit), Agent health. Deploy to Vercel on `pipeline.codify-labs.com`.
 - **Phase 4 — More sources:** Social listening, Product launches, then Google Maps, Tech-stack, Agency partners.
