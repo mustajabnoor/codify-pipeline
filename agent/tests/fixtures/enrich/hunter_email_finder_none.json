@@ -1,0 +1,18 @@
+{
+  "data": {
+    "first_name": "Priya",
+    "last_name": "Shah",
+    "email": null,
+    "score": null,
+    "domain": "acme.com",
+    "accept_all": false,
+    "position": null,
+    "twitter": null,
+    "linkedin_url": null,
+    "phone_number": null,
+    "company": "Acme",
+    "sources": [],
+    "verification": {"date": null, "status": null}
+  },
+  "meta": {"params": {"domain": "acme.com"}}
+}

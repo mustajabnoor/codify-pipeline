@@ -37,6 +37,8 @@ def test_shared_run_step() -> None:
         "SUPABASE_SERVICE_ROLE_KEY",
         "ANTHROPIC_API_KEY",
         "SLACK_WEBHOOK_URL",
+        "HUNTER_API_KEY",
+        "MILLIONVERIFIER_API_KEY",
     ):
         assert f"{secret}: ${{{{ secrets.{secret} }}}}" in text
 

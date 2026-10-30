@@ -71,14 +71,21 @@ Search keywords, subreddits, cities, categories and job titles live in the `sour
 ## 5. Pipeline (same for every source)
 
 ```
-collect → normalize → dedupe → enrich (decision-maker + email) → verify email
-        → AI: score fit + explain + draft message → save as status "new"
-        → human approves in dashboard → contacted via email / DM / WhatsApp
+collect → normalize → dedupe → AI: extract + score fit + explain
+        → enrich (decision-maker + email) → verify email → AI: draft message
+        → save as status "new" → human approves in dashboard → contacted via email / DM / WhatsApp
 ```
+
+Enrichment runs after scoring (not before) so rejects and weak leads spend no lookup credits, and before drafting so the draft can address the contact found.
 
 - **Dedupe key:** normalized website domain (lowercase, no `www.`, no path). Leads without a domain (e.g. a Reddit user) dedupe on `source_url`. If a known company appears via a new source, **add a new signal to the existing lead** — never create a duplicate lead.
 - **Do-not-contact:** check `do_not_contact` (by email and domain) before inserting or enriching. Skip matches.
 - **Enrichment:** Hunter.io (domain search / email finder) or Apollo API. Verify with MillionVerifier (or NeverBounce). Store the verification result; never mark an email valid without a verifier response.
+  - Implemented in `agent/enrich/` (Hunter + MillionVerifier). Only new leads with a domain and `fit_score` ≥ 6 (`MIN_SCORE`) are searched, at most 10 Hunter lookups per run (`MAX_LOOKUPS_PER_RUN`). A founder/CEO named in the signal is looked up by name (email finder); otherwise a domain search picks the most senior person (founder/CEO → CTO/COO → engineering/product heads, then generic inboxes like info@).
+  - Each lead gets at most one found contact (primary, unless it already has one), verified by MillionVerifier: ok → valid, catch_all → catch_all, unknown → risky, invalid/disposable → invalid (that address is dropped and the next person tried, 2 verifications max). Without a verifier response the email stays `unverified`. Found emails on `do_not_contact` are never used.
+  - The outcome (or the reason it was skipped) is stored in the signal's `metadata.enrichment`, including the verifier's raw verdicts.
+  - A failed lookup is recorded in `agent_runs.errors` and the lead is saved without a contact. A rejected key or used-up credits turns that provider off for the rest of the run (one error, so the run is `partial` and Slack alerts).
+  - Real runs enrich when `HUNTER_API_KEY` is set (a missing key only logs a warning; a missing `MILLIONVERIFIER_API_KEY` leaves emails unverified). Dry runs enrich only with `--enrich`, so testing a source spends no credits.
 - **Every run** writes a row to `agent_runs` with counts and errors.
 - **Every collector supports `--dry-run`** (no DB writes, prints what it would insert as JSON lines; reads Supabase for dedupe when credentials are set).
 - **Company domain from text:** collectors whose source gives no website (job boards) take the company's domain from links in the post, accepting only hosts that contain the company name (`company_domain_from_text` in `agent/core/normalize.py`). When unsure it returns none: a wrong domain would merge two companies.
@@ -169,7 +176,7 @@ Current schedule (cron in UTC → Asia/Karachi):
 
 - Source workflows call the shared `run-source.yml` (`workflow_call`); a new source only needs a small caller file with its cron and a `concurrency` group. Manual runs have a `dry_run` checkbox.
 - **GitHub cron is the source of truth** for when a source runs; `source_configs.schedule` is informational until the dashboard's "Run now" (Phase 3) triggers workflows. `enabled = false` in `source_configs` still makes a scheduled run a no-op.
-- Required GitHub Actions secrets (prod values): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `SLACK_WEBHOOK_URL`. Add the enrichment keys when 2.3 lands.
+- Required GitHub Actions secrets (prod values): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `SLACK_WEBHOOK_URL`. Enrichment: `HUNTER_API_KEY`, `MILLIONVERIFIER_API_KEY` (optional; without them leads are saved with no contact / unverified emails).
 - **Slack alerts** (`agent/core/slack.py`): a real run that ends `failed` or `partial` (or can't start, e.g. missing secrets) posts one alert with counts, the first 5 errors and a link to the Actions run. Successful and dry runs post nothing. Posting never raises, and the webhook URL is never logged.
 - **Daily summary** (`agent/summary.py`): new leads in the last 24h per source, 8+ count, auto-rejected count, top 5 leads, last run per enabled source (flagged when a source hasn't run in 26h), follow-ups due and AI cost. A quiet day still posts, so silence means the summary itself failed. `python -m agent summary --dry-run` prints the message instead of posting it.
 
@@ -215,7 +222,7 @@ Two dev and prod Supabase projects exist: **pipeline-dev** (Claude Code cloud se
 - **Phase 2 — First sources:** Job postings + Funding news end-to-end (collect → enrich → score → draft → save), GitHub Actions crons, Slack daily summary.
   - 2.1 Job postings collector (RemoteOK + WWR), HTTP retry helper (done)
   - 2.2 AI layer: score + draft (+ extract), token/cost logging, `outreach` draft rows (done)
-  - 2.3 Enrichment: Hunter + MillionVerifier (blocked: both API keys are rejected; fix them in the cloud environment settings and GitHub secrets)
+  - 2.3 Enrichment: Hunter + MillionVerifier (done; checked live on dev 2026-10-30. Hunter is on the Free plan: 50 credits/month)
   - 2.4 Funding news collector (done)
   - 2.5 Cron workflows per source, Slack alerts + daily summary (done)
   - Live runs are allowed once 2.2 is merged; crons come in 2.5. Apify job actors and Wellfound come after 2.5.

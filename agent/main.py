@@ -21,6 +21,8 @@ from agent.core.models import RunError, RunStats, RunStatus
 from agent.core.pipeline import process_candidate
 from agent.core.runs import RunRecorder
 from agent.core.slack import SlackNotifier
+from agent.enrich.enricher import Enricher
+from agent.enrich.providers import Hunter, MillionVerifier
 from agent.sources.base import Source
 from agent.sources.registry import SOURCES, get_source
 from agent.summary import build_summary, summary_payload
@@ -41,20 +43,52 @@ def build_repository(settings: Settings, *, dry_run: bool) -> Repository:
     return DryRunRepository()
 
 
+def build_enricher(
+    settings: Settings, repo: Repository, run: RunRecorder, *, dry_run: bool, enrich: bool
+) -> Enricher | None:
+    """Contact finding for scored leads. Real runs enrich when HUNTER_API_KEY is
+    set; dry runs only with --enrich, so testing a source spends no credits."""
+    if dry_run and not enrich:
+        log.info("dry run: no contact search (add --enrich to spend lookup credits)")
+        return None
+    if settings.missing("hunter_api_key"):
+        log.warning("enrichment off: missing HUNTER_API_KEY; leads are saved without contacts")
+        return None
+    assert settings.hunter_api_key
+    verifier = None
+    if settings.missing("millionverifier_api_key"):
+        log.warning("verification off: missing MILLIONVERIFIER_API_KEY; emails stay unverified")
+    else:
+        assert settings.millionverifier_api_key
+        verifier = MillionVerifier(settings.millionverifier_api_key.get_secret_value())
+    return Enricher(
+        Hunter(settings.hunter_api_key.get_secret_value()),
+        verifier,
+        is_blocked=lambda email: repo.is_do_not_contact(domains=[], emails=[email]),
+        report_error=run.record_error,
+    )
+
+
 def build_assessor(
-    settings: Settings, run: RunRecorder, *, dry_run: bool, no_ai: bool, ai: AIClient | None
+    settings: Settings,
+    run: RunRecorder,
+    *,
+    dry_run: bool,
+    no_ai: bool,
+    ai: AIClient | None,
+    enricher: Enricher | None = None,
 ) -> Assessor | None:
     """AI scoring is required for real runs, so no unscored lead reaches the
     database. Dry runs skip it when asked (--no-ai) or when there is no key."""
     if no_ai:
-        log.info("AI off (--no-ai): leads are not scored or drafted")
+        log.info("AI off (--no-ai): leads are not scored, drafted or enriched")
         return None
     if ai is None:
         if dry_run and settings.missing("anthropic_api_key"):
-            log.warning("dry run: no Anthropic key, leads are not scored or drafted")
+            log.warning("dry run: no Anthropic key, leads are not scored, drafted or enriched")
             return None
         ai = ClaudeAI.from_settings(settings)  # raises MissingConfigError without a key
-    return Assessor(ai, run.add_tokens)
+    return Assessor(ai, run.add_tokens, enricher)
 
 
 def run_source(
@@ -64,11 +98,15 @@ def run_source(
     repo: Repository,
     dry_run: bool,
     no_ai: bool = False,
+    enrich: bool = False,
     ai: AIClient | None = None,
+    enricher: Enricher | None = None,
     notify: RunNotify | None = None,
 ) -> RunStatus:
     """Run one source. After a real run that failed or partly failed, `notify`
-    is called with the source, status and counts (the Slack alert)."""
+    is called with the source, status and counts (the Slack alert). `enrich`
+    turns contact search on for a dry run; `ai` and `enricher` replace the
+    real clients (tests)."""
     source_cls = get_source(name)
     if source_cls.dry_run_only and not dry_run:
         raise AgentError(f"source {name!r} is dev-only; use --dry-run")
@@ -83,7 +121,11 @@ def run_source(
             return RunStatus.SUCCESS
         config_dicts = [c.config for c in configs if c.enabled] or [source_cls.default_config]
         with run:
-            _collect(name, source_cls, config_dicts, settings, repo, run, dry_run, no_ai, ai)
+            if enricher is None and not no_ai:
+                enricher = build_enricher(settings, repo, run, dry_run=dry_run, enrich=enrich)
+            _collect(
+                name, source_cls, config_dicts, settings, repo, run, dry_run, no_ai, ai, enricher
+            )
     except BaseException as exc:
         if run.status is RunStatus.RUNNING:  # failed before the run row was opened
             run.record_error(f"{type(exc).__name__}: {exc}", fatal=True)
@@ -107,10 +149,11 @@ def _collect(
     dry_run: bool,
     no_ai: bool,
     ai: AIClient | None,
+    enricher: Enricher | None,
 ) -> None:
     # Inside the recorder so a missing key is logged as a failed run.
     settings.require(*source_cls.required_settings, scope=name)
-    assess = build_assessor(settings, run, dry_run=dry_run, no_ai=no_ai, ai=ai)
+    assess = build_assessor(settings, run, dry_run=dry_run, no_ai=no_ai, ai=ai, enricher=enricher)
     if source_cls.needs_ai and assess is None:
         raise AgentError(
             f"source {name!r} needs AI to read its items; it can't run with --no-ai "
@@ -149,6 +192,11 @@ def main(argv: list[str] | None = None) -> int:
     run_cmd.add_argument(
         "--no-ai", action="store_true", help="dry runs only: skip AI scoring and drafting"
     )
+    run_cmd.add_argument(
+        "--enrich",
+        action="store_true",
+        help="dry runs only: also find and verify contacts (spends lookup credits)",
+    )
     commands.add_parser("sources", help="list available sources")
     summary_cmd = commands.add_parser("summary", help="post the daily summary to Slack")
     summary_cmd.add_argument(
@@ -178,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:
             repo=repo,
             dry_run=args.dry_run,
             no_ai=args.no_ai,
+            enrich=args.enrich,
             notify=notifier.run_finished if notifier else None,
         )
     except AgentError as exc:

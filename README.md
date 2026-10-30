@@ -13,7 +13,7 @@ See [CLAUDE.md](CLAUDE.md) for the full product and technical brief.
 agent/        Python collector (python -m agent run <source> [--dry-run])
   core/       config, models, normalize, dedupe, db, runs, pipeline, http, text
   sources/    one module per source (job_posts.py, ...), registry.py, fixture.py (dev only)
-  enrich/     contact finding + email verification (Phase 2)
+  enrich/     contact finding (Hunter) + email verification (MillionVerifier)
   ai/         Claude client, versioned prompts, extract -> score -> draft
   tests/
 dashboard/    Next.js app (Phase 3)
@@ -62,6 +62,15 @@ uv run python -m agent run job_posting --dry-run --no-ai
 
 Drafts may only cite proof points listed in `agent/ai/prompts/company_profile.md`.
 
+Leads scoring 6+ get a decision-maker's email from Hunter.io, verified by
+MillionVerifier (`HUNTER_API_KEY`, `MILLIONVERIFIER_API_KEY`; at most 10
+lookups per run). Real runs do this whenever the Hunter key is set; dry runs
+only with `--enrich`, so trying out a source spends no credits:
+
+```bash
+uv run python -m agent run job_posting --dry-run --enrich
+```
+
 `--dry-run` never writes to the database. It prints each would-be insert as a
 JSON line on stdout (logs go to stderr). If `SUPABASE_URL` and
 `SUPABASE_SERVICE_ROLE_KEY` are set, it reads the real database for dedupe so
@@ -85,7 +94,8 @@ alert. To run a source by hand: GitHub → **Actions** → pick the workflow →
 
 The workflows need these repository secrets (Settings → Secrets and variables
 → Actions), with **pipeline-prod** values: `SUPABASE_URL`,
-`SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `SLACK_WEBHOOK_URL`.
+`SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `SLACK_WEBHOOK_URL`, and for
+contact finding `HUNTER_API_KEY` and `MILLIONVERIFIER_API_KEY`.
 
 Preview the daily summary without posting it:
 
