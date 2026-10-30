@@ -45,6 +45,12 @@ uv run python -m agent run fixture --dry-run
 uv run python -m agent run job_posting --dry-run
 ```
 
+```bash
+uv run python -m agent run funding --dry-run
+```
+
+The funding source needs AI to read articles, so it can't run with `--no-ai`.
+
 New leads are extracted, scored and drafted by Claude (see CLAUDE.md §6). That
 needs `ANTHROPIC_API_KEY` (or `CODIFY_ANTHROPIC_API_KEY`); real runs fail without
 it, dry runs skip AI. Add `--no-ai` to a dry run to skip it on purpose. Cost is

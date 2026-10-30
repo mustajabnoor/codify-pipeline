@@ -24,9 +24,54 @@ insert into public.source_configs (source, name, config, schedule, enabled) valu
 (
   'funding', 'default',
   '{
-    "rss_feeds": [],
-    "rounds": ["pre-seed", "seed", "series a"],
-    "keywords": ["raises", "raised", "funding", "pre-seed", "seed round", "series a"]
+    "rss_feeds": [
+      "https://www.eu-startups.com/feed/",
+      "https://techfundingnews.com/feed/",
+      "https://news.crunchbase.com/feed/"
+    ],
+    "title_keywords": [
+      "raise",
+      "secure",
+      "closes",
+      "lands",
+      "bags",
+      "nabs",
+      "snags",
+      "grabs",
+      "picks up",
+      "funding",
+      "pre-seed",
+      "seed",
+      "series a",
+      "backed"
+    ],
+    "exclude_keywords": [
+      "series b",
+      "series c",
+      "series d",
+      "series e",
+      "series f",
+      "ipo",
+      "acquire",
+      "acquisition",
+      "layoffs",
+      "fund ii",
+      "fund iii",
+      "fund iv",
+      "second fund",
+      "debut fund",
+      "new fund",
+      "interim close",
+      "tracker"
+    ],
+    "rounds": [
+      "pre-seed",
+      "seed",
+      "series a"
+    ],
+    "unnamed_round_max": 15000000,
+    "max_age_days": 7,
+    "max_articles": 40
   }',
   '30 3 * * *', true
 ),

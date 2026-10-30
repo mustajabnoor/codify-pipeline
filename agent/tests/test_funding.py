@@ -14,11 +14,13 @@ from agent.core.db import DryRunRepository, MemoryRepository
 from agent.core.errors import AgentError
 from agent.core.feeds import FeedItem, parse_feed
 from agent.core.models import LeadSource, RunStatus, SourceConfig
+from agent.core.text import html_to_text
 from agent.sources.funding import (
     FundingNewsSource,
     is_candidate_article,
     to_candidate,
     verified_domain,
+    wanted_round,
 )
 
 from .conftest import FAKE_USAGE, FakeAI
@@ -256,3 +258,139 @@ def test_needs_ai_even_in_dry_runs() -> None:
 def test_feed_item_without_date_is_kept() -> None:
     item = FeedItem("Acme raises seed", "https://n.example.com/1", None, "")
     assert is_candidate_article(item, CONFIG, NOW)
+
+
+# --- Real feeds (trimmed EU-Startups and Tech Funding News responses, Oct 2026) ---
+
+REAL = {
+    name: parse_feed((Path(__file__).parent / "fixtures" / "funding" / f"{name}.rss").read_bytes())
+    for name in ("eu_startups", "techfundingnews")
+}
+REAL_CONFIG = {**CONFIG, "max_age_days": 36500}
+
+
+def real(feed: str, title_start: str) -> FeedItem:
+    return next(i for i in REAL[feed] if i.title.startswith(title_start))
+
+
+def test_real_feeds_parse() -> None:
+    assert [len(items) for items in REAL.values()] == [5, 5]
+    vuse = real("eu_startups", "EXCLUSIVE: Freiburg")
+    assert vuse.url.startswith("https://www.eu-startups.com/2026/10/")
+    assert vuse.published_at and vuse.published_at.tzinfo is not None
+    assert "vuse-xr.de" in html_to_text(vuse.html)
+
+
+@pytest.mark.parametrize(
+    ("feed", "title_start", "expected"),
+    [
+        ("eu_startups", "EXCLUSIVE: Freiburg", True),  # "raises"
+        ("eu_startups", "StrollMe bags", True),  # "bags"
+        ("eu_startups", "Profitable Dutch startup Braid", True),
+        ("eu_startups", "OPINION", False),
+        ("eu_startups", "Pieterjan Bouten", False),  # "second fund" is a fund launch
+        ("techfundingnews", "Crux Labs", True),
+        ("techfundingnews", "Pitch deck: Fronted lands", True),  # "lands"
+        ("techfundingnews", "Kalshi", False),
+    ],
+)
+def test_real_title_filter(feed: str, title_start: str, expected: bool) -> None:
+    assert is_candidate_article(real(feed, title_start), REAL_CONFIG, NOW) is expected
+
+
+def test_real_domains_come_only_from_the_article() -> None:
+    braid_eu = html_to_text(real("eu_startups", "Profitable Dutch startup Braid").html)
+    braid_tfn = html_to_text(real("techfundingnews", "Braid raises").html)
+    braid = extraction(company_name="Braid", website="https://www.nextcommunications.io/")
+    assert verified_domain(braid, braid_eu) == "nextcommunications.io"
+    # The other outlet never links it: no domain rather than a guess.
+    assert verified_domain(braid, braid_tfn) is None
+    vuse = html_to_text(real("eu_startups", "EXCLUSIVE: Freiburg").html)
+    assert (
+        verified_domain(extraction(company_name="VUSE XR", website="vuse-xr.de"), vuse)
+        == "vuse-xr.de"
+    )
+
+
+@pytest.mark.parametrize(
+    ("found", "expected"),
+    [
+        (extraction(round="seed"), True),
+        (extraction(round="other", amount=6_000_000), True),  # Crux Labs: "an oversubscribed round"
+        (extraction(round="other", amount=22_000_000, currency="EUR"), False),  # StrollMe
+        (extraction(round="other", amount=None), False),
+        (extraction(round="series b", amount=5_000_000), False),
+    ],
+)
+def test_unnamed_rounds_are_kept_up_to_the_cap(found: FundingExtraction, expected: bool) -> None:
+    assert wanted_round(found, ["pre-seed", "seed", "series a"], 15_000_000) is expected
+    if found.round == "other":
+        assert not wanted_round(found, ["seed"], None)  # no cap configured -> dropped
+
+
+def test_real_feeds_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both real feeds through run_source; the extractor's answers mirror what
+    Claude returned for these articles in the live dry run."""
+    answers = {
+        "EXCLUSIVE: Freiburg": extraction(
+            company_name="VUSE XR", website="vuse-xr.de", round="pre-seed",
+            amount=1_200_000, currency="EUR",
+            founders=[Founder(name="Niclas Matthias", role="CEO")],
+        ),
+        "StrollMe bags": extraction(company_name="StrollMe", website=None, round="other",
+                                    amount=22_000_000, currency="EUR", founders=[]),
+        "Profitable Dutch startup Braid": extraction(
+            company_name="Braid", website="https://www.nextcommunications.io/",
+            round="series a", amount=34_130_000, currency="EUR", founders=[],
+        ),
+        "Crux Labs": extraction(company_name="Crux Labs", website=None, round="other",
+                                amount=6_000_000, founders=[]),
+        "Pitch deck: Fronted": extraction(company_name="Fronted", website=None, round="seed",
+                                          amount=1_900_000, founders=[]),
+        "Collective raises": extraction(company_name="Collective", round="series b",
+                                        amount=100_000_000, founders=[]),
+        "Braid raises": extraction(company_name="Braid", website=None, round="series a",
+                                   amount=38_000_000, founders=[]),
+    }  # fmt: skip
+
+    def read(prompt: str) -> FundingExtraction:
+        title = prompt.split("\n", 1)[0].removeprefix("Title: ")
+        return next(v for k, v in answers.items() if title.startswith(k))
+
+    feeds = {
+        "https://www.eu-startups.com/feed/": "eu_startups",
+        "https://techfundingnews.com/feed/": "techfundingnews",
+    }
+    fixtures = Path(__file__).parent / "fixtures" / "funding"
+    routes = {url: (fixtures / f"{name}.rss").read_bytes() for url, name in feeds.items()}
+    monkeypatch.setattr(
+        FundingNewsSource,
+        "transport",
+        httpx.MockTransport(lambda r: httpx.Response(200, content=routes[str(r.url)])),
+    )
+    repo = MemoryRepository()
+    repo.source_configs = [
+        SourceConfig(
+            source=LeadSource.FUNDING,
+            name="default",
+            config={**REAL_CONFIG, "rss_feeds": list(feeds)},
+        )
+    ]
+    ai = FakeAI(answers={"funding_extract": read})
+    status = cli.run_source(
+        "funding", settings=Settings(_env_file=None), repo=repo, dry_run=False, ai=ai
+    )
+
+    assert status is RunStatus.SUCCESS
+    leads = sorted((lead["company_name"], lead["domain"] or "") for lead in repo.leads.values())
+    # StrollMe (unnamed, over the cap) and Collective (Series B) are dropped. Braid
+    # appears twice: the second outlet gives no domain, and domain-less leads
+    # dedupe only on the article URL (CLAUDE.md §5).
+    assert leads == [
+        ("Braid", ""),
+        ("Braid", "nextcommunications.io"),
+        ("Crux Labs", "crux-labs.ai"),  # found via a link containing the name
+        ("Fronted", ""),
+        ("VUSE XR", "vuse-xr.de"),
+    ]
+    assert ai.tasks.count("funding_extract") == 7

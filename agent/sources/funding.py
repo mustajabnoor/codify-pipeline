@@ -7,6 +7,8 @@ Config (source_configs.config):
   title_keywords  [str]   only articles whose title has one are read by AI
   exclude_keywords [str]  skip titles with these (later rounds, IPOs...)
   rounds          [str]   keep these rounds (pre-seed, seed, series a, ...)
+  unnamed_round_max num   also keep rounds with no stage name up to this amount
+                          (default 15M; currency ignored)
   max_age_days    int     ignore older articles (default 7)
   max_articles    int     AI reads at most this many articles per run (default 40)
 """
@@ -35,6 +37,7 @@ FUNDING_EXTRACT_PROMPT = "funding_extract_v1"
 ARTICLE_LIMIT = 8000
 DEFAULT_MAX_AGE_DAYS = 7
 DEFAULT_MAX_ARTICLES = 40
+DEFAULT_UNNAMED_ROUND_MAX = 15_000_000
 _DOMAIN_IN_TEXT = re.compile(r"\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b", re.I)
 
 
@@ -60,13 +63,33 @@ def verified_domain(extraction: FundingExtraction, text: str) -> str | None:
     return company_domain_from_text(extraction.company_name or "", text)
 
 
+def wanted_round(
+    extraction: FundingExtraction, rounds: Iterable[str], unnamed_round_max: float | None
+) -> bool:
+    """A listed round, or an unnamed one ("other") no bigger than the cap: many
+    early-stage articles never say "seed". The cap ignores currency (USD, EUR
+    and GBP are close enough for a rough size filter)."""
+    if extraction.round in set(rounds):
+        return True
+    return bool(
+        extraction.round == "other"
+        and unnamed_round_max
+        and extraction.amount
+        and extraction.amount <= unnamed_round_max
+    )
+
+
 def to_candidate(
-    item: FeedItem, feed: str, extraction: FundingExtraction, rounds: Iterable[str]
+    item: FeedItem,
+    feed: str,
+    extraction: FundingExtraction,
+    rounds: Iterable[str],
+    unnamed_round_max: float | None = None,
 ) -> LeadCandidate | None:
     """None when the article isn't one company's round in a wanted stage."""
     if not extraction.is_single_announcement or not extraction.company_name:
         return None
-    if extraction.round not in set(rounds):
+    if not wanted_round(extraction, rounds, unnamed_round_max):
         return None
     text = html_to_text(item.html)
     domain = verified_domain(extraction, text)
@@ -124,16 +147,25 @@ class FundingNewsSource(Source):
     name = "funding"
     needs_ai = True
     default_config: ClassVar[dict[str, Any]] = {
-        "rss_feeds": [],
+        # Full-text feeds with early-stage rounds. TechCrunch's feed only has
+        # one-line summaries (no company links), so it isn't listed.
+        "rss_feeds": [
+            "https://www.eu-startups.com/feed/",
+            "https://techfundingnews.com/feed/",
+            "https://news.crunchbase.com/feed/",
+        ],
+        # Phrases match word starts: "raise" also matches "raises" / "raised".
         "title_keywords": [
-            "raises", "raised", "secures", "closes", "lands", "funding", "pre-seed",
-            "seed", "series a", "investment", "backed",
+            "raise", "secure", "closes", "lands", "bags", "nabs", "snags", "grabs",
+            "picks up", "funding", "pre-seed", "seed", "series a", "backed",
         ],
         "exclude_keywords": [
-            "series b", "series c", "series d", "series e", "ipo", "acquires",
-            "acquired", "acquisition", "layoffs", "fund i", "new fund",
+            "series b", "series c", "series d", "series e", "series f", "ipo",
+            "acquire", "acquisition", "layoffs", "fund ii", "fund iii", "fund iv",
+            "second fund", "debut fund", "new fund", "interim close", "tracker",
         ],
         "rounds": ["pre-seed", "seed", "series a"],
+        "unnamed_round_max": DEFAULT_UNNAMED_ROUND_MAX,
         "max_age_days": DEFAULT_MAX_AGE_DAYS,
         "max_articles": DEFAULT_MAX_ARTICLES,
     }  # fmt: skip
@@ -177,7 +209,9 @@ class FundingNewsSource(Source):
                         self.report_error(f"article extraction failed: {exc}", url=item.url)
                         continue
                     try:
-                        candidate = to_candidate(item, feed, extraction, rounds)
+                        candidate = to_candidate(
+                            item, feed, extraction, rounds, config.get("unnamed_round_max")
+                        )
                     except ValidationError as exc:
                         self.report_error(
                             f"invalid funding item: {exc.error_count()} error(s)", url=item.url
