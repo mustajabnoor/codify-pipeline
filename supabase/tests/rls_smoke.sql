@@ -47,6 +47,43 @@ begin
 end;
 $$;
 update public.leads set notes = 'checked' where domain = 'beta.io';
+-- Source platform switches: available ones can be flipped, planned ones can't
+-- be switched on, and run fields / availability are the agent's alone.
+do $$
+begin
+  if (select count(*) from public.source_platforms) <> 19 then
+    raise exception 'team member should see 19 source platforms';
+  end if;
+  update public.source_platforms set enabled = false, updated_by = 'owner@example.com' where key = 'remoteok';
+  if (select enabled from public.source_platforms where key = 'remoteok') then
+    raise exception 'team member should be able to switch a platform off';
+  end if;
+  update public.source_platforms set enabled = true where key = 'remoteok';
+  begin
+    update public.source_platforms set enabled = true where key = 'reddit';
+    raise exception 'enabling a platform that is not available should have failed';
+  exception when check_violation then
+    null;
+  end;
+  begin
+    update public.source_platforms set available = true where key = 'reddit';
+    raise exception 'team member should not change availability';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    update public.source_platforms set last_run_status = 'success' where key = 'remoteok';
+    raise exception 'team member should not write run fields';
+  exception when insufficient_privilege then
+    null;
+  end;
+  update public.app_settings set ai_enabled = false, updated_by = 'owner@example.com';
+  if (select ai_enabled from public.app_settings) then
+    raise exception 'team member should be able to switch AI off';
+  end if;
+  update public.app_settings set ai_enabled = true;
+end;
+$$;
 reset role;
 
 -- 4. Signed-in stranger sees nothing and cannot write.
@@ -60,6 +97,11 @@ begin
   if (select coalesce(sum(leads), 0) from public.v_source_performance) <> 0 then
     raise exception 'non-member must not see view data';
   end if;
+  if (select count(*) from public.source_platforms) <> 0 or (select count(*) from public.app_settings) <> 0 then
+    raise exception 'non-member must not see source platforms or settings';
+  end if;
+  -- RLS hides the row, so this changes nothing (checked in 6).
+  update public.app_settings set ai_enabled = false;
   begin
     insert into public.leads (company_name, first_source) values ('Evil', 'social');
     raise exception 'non-member insert should have failed';
@@ -87,6 +129,12 @@ do $$
 begin
   if (select updated_at <= created_at from public.leads where domain = 'beta.io') then
     raise exception 'updated_at trigger did not fire';
+  end if;
+  if not (select ai_enabled from public.app_settings) then
+    raise exception 'non-member update of app_settings must not apply';
+  end if;
+  if (select updated_by from public.source_platforms where key = 'remoteok') <> 'owner@example.com' then
+    raise exception 'source_platforms.updated_by not saved';
   end if;
 end;
 $$;

@@ -70,7 +70,10 @@ async function Lead({ params }: Pick<PageProps<"/leads/[id]">, "params">) {
             ) : (
               <span>No website known</span>
             )}
-            <span>· {SOURCE_LABELS[lead.first_source]}</span>
+            <span>
+              · {SOURCE_LABELS[lead.first_source]}
+              {lead.source_platforms && ` via ${lead.source_platforms.name}`}
+            </span>
             <span>· added {formatDate(lead.created_at)}</span>
           </p>
         </div>
@@ -205,7 +208,14 @@ function Signals({ signals }: { signals: LeadDetail["signals"] }) {
           return (
             <div key={s.id} className="space-y-2">
               <p className="text-xs text-muted-foreground">
-                {SOURCE_LABELS[s.source]} · {s.signal_type.replace(/_/g, " ")} · {formatDateTime(s.detected_at)}
+                {[
+                  SOURCE_LABELS[s.source],
+                  s.source_platforms?.name,
+                  s.signal_type.replace(/_/g, " "),
+                  formatDateTime(s.detected_at),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </p>
               <p className="font-medium">
                 <ExternalA href={s.source_url}>{s.title ?? s.source_url}</ExternalA>

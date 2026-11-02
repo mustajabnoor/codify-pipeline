@@ -56,6 +56,12 @@ needs `ANTHROPIC_API_KEY` (or `CODIFY_ANTHROPIC_API_KEY`); real runs fail withou
 it, dry runs skip AI. Add `--no-ai` to a dry run to skip it on purpose. Cost is
 roughly $0.03 per new lead; known posts and companies cost nothing.
 
+Both can be switched from the dashboard's **Sources** page: each source platform
+(RemoteOK, We Work Remotely, EU-Startups, ...) has an on/off switch, and the
+Claude API switch turns AI off for every run. With AI off, leads are saved
+without score, draft or contact, funding news is paused, and once AI is back on
+each source's next run scores up to 20 of the waiting leads.
+
 ```bash
 uv run python -m agent run job_posting --dry-run --no-ai
 ```

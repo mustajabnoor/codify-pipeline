@@ -20,12 +20,72 @@ from agent.core.config import Settings
 from agent.core.dedupe import DedupeLookup
 from agent.core.errors import DuplicateLeadError, DuplicateSignalError
 from agent.core.models import LeadCandidate, LeadSource, RunStats, RunStatus, SourceConfig
+from agent.core.platforms import PlatformRun
 
 log = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class StoredLead:
+    """A saved lead rebuilt for scoring later (it was saved while AI was off).
+    contact_ids[i] is the stored id of candidate.contacts[i]."""
+
+    lead_id: UUID
+    candidate: LeadCandidate
+    contact_ids: list[str]
+
+
+@dataclass(frozen=True)
+class PlatformRow:
+    """The parts of a source_platforms row the agent reads."""
+
+    key: str
+    source: str
+    enabled: bool
+    needs_ai: bool = False
+
+
+def expected_sources(
+    enabled_configs: set[str], platforms: Sequence[PlatformRow], ai_enabled: bool
+) -> list[str]:
+    """Sources that should run on schedule: enabled in source_configs, with at
+    least one platform switched on (when it has platforms), and not paused
+    because every platform it has on needs AI while AI is off."""
+    expected = []
+    for source in sorted(enabled_configs):
+        own = [p for p in platforms if p.source == source]
+        on = [p for p in own if p.enabled]
+        if own and not on:
+            continue
+        if not ai_enabled and on and all(p.needs_ai for p in on):
+            continue
+        expected.append(source)
+    return expected
+
+
 class Repository(DedupeLookup, Protocol):
     def get_source_configs(self, source: str) -> list[SourceConfig]: ...
+
+    def get_platform_switches(self, source: str) -> dict[str, bool] | None:
+        """source_platforms.enabled by key for this source; None if unknown."""
+        ...
+
+    def ai_enabled(self) -> bool:
+        """The Claude API switch (app_settings.ai_enabled)."""
+        ...
+
+    def record_platform_runs(self, runs: list[PlatformRun]) -> None:
+        """Write each platform's last run (time, status, counts, first error)."""
+        ...
+
+    def unscored_leads(self, source: str, limit: int) -> list[StoredLead]:
+        """New leads of this first_source saved without a score, oldest first."""
+        ...
+
+    def save_assessment(self, stored: StoredLead, assessed: LeadCandidate) -> bool:
+        """Store a later AI assessment: score fields, filled-in facts, contacts,
+        draft. False if the lead was scored or moved on in the meantime."""
+        ...
 
     def create_lead(self, candidate: LeadCandidate) -> UUID:
         """Insert lead + signal + contacts + activity. Raises DuplicateLeadError
@@ -77,9 +137,13 @@ class ReportReader(Protocol):
 
     def recent_runs(self, since: datetime) -> list[RunDigest]: ...
 
-    def enabled_sources(self) -> list[str]: ...
+    def enabled_sources(self) -> list[str]:
+        """Sources expected to run on schedule (see expected_sources)."""
+        ...
 
     def followups_due_count(self) -> int: ...
+
+    def ai_enabled(self) -> bool: ...
 
 
 def _ts(value: str | datetime) -> datetime:
@@ -109,6 +173,50 @@ def _run_row(status: RunStatus, stats: RunStats) -> dict[str, Any]:
     return row
 
 
+def _platform_row(run: PlatformRun) -> dict[str, Any]:
+    return {
+        "last_run_at": datetime.now(UTC).isoformat(),
+        "last_run_status": run.status.value,
+        "last_run_items": run.items_seen,
+        "last_run_leads_new": run.leads_new,
+        "last_run_error": run.error,
+    }
+
+
+# Lead facts the extract step may fill in (it never overwrites collected ones).
+_EXTRACTED_FIELDS = ("industry", "country", "city", "company_size", "description", "tech_stack")
+
+
+def _assessed_lead_update(assessed: LeadCandidate) -> dict[str, Any]:
+    row = assessed.model_dump(mode="json", include=set(_EXTRACTED_FIELDS))
+    row.update(assessed.assessment_fields())
+    return row
+
+
+def _contact_changes(
+    stored: StoredLead, assessed: LeadCandidate
+) -> tuple[list[tuple[str, dict[str, Any]]], list[dict[str, Any]]]:
+    """(updates to stored contacts by id, new contact rows). The AI step keeps
+    the stored contacts first and in order; it may fill one in (an email
+    found for a named person) and add new ones after them."""
+    updates, inserts = [], []
+    rows = assessed.contact_rows(stored.lead_id)
+    for index, (contact, row) in enumerate(zip(assessed.contacts, rows, strict=True)):
+        if index < len(stored.contact_ids):
+            if contact != stored.candidate.contacts[index]:
+                row.pop("lead_id")
+                updates.append((stored.contact_ids[index], row))
+        else:
+            inserts.append(row)
+    return updates, inserts
+
+
+def _scored_activity(lead_id: UUID, assessed: LeadCandidate) -> dict[str, Any]:
+    score = assessed.assessment.fit_score if assessed.assessment else None
+    note = f"scored {score}/10 (saved while Claude AI was off)"
+    return {"lead_id": str(lead_id), "type": "lead_scored", "note": note, "actor": "agent"}
+
+
 class MemoryRepository:
     def __init__(self) -> None:
         self.leads: dict[UUID, dict[str, Any]] = {}
@@ -120,6 +228,9 @@ class MemoryRepository:
         self.source_configs: list[SourceConfig] = []
         self.dnc_emails: set[str] = set()
         self.dnc_domains: set[str] = set()
+        self.platforms: list[PlatformRow] = []
+        self.platform_runs: list[PlatformRun] = []
+        self.ai_on = True
 
     def is_do_not_contact(self, *, domains: Sequence[str], emails: Sequence[str]) -> bool:
         return bool(self.dnc_domains.intersection(domains) or self.dnc_emails.intersection(emails))
@@ -133,6 +244,63 @@ class MemoryRepository:
 
     def get_source_configs(self, source: str) -> list[SourceConfig]:
         return [c for c in self.source_configs if c.source.value == source]
+
+    def get_platform_switches(self, source: str) -> dict[str, bool] | None:
+        own = {p.key: p.enabled for p in self.platforms if p.source == source}
+        return own or None
+
+    def ai_enabled(self) -> bool:
+        return self.ai_on
+
+    def record_platform_runs(self, runs: list[PlatformRun]) -> None:
+        self.platform_runs.extend(runs)
+
+    def unscored_leads(self, source: str, limit: int) -> list[StoredLead]:
+        found = []
+        leads = sorted(self.leads.items(), key=lambda item: _ts(item[1]["created_at"]))
+        for lead_id, lead in leads:
+            if (
+                lead["first_source"] != source
+                or lead["status"] != "new"
+                or lead.get("fit_score") is not None
+            ):
+                continue
+            signals = sorted(
+                (
+                    s
+                    for s in self.signals.values()
+                    if s["lead_id"] == str(lead_id) and s["source"] == source
+                ),
+                key=lambda s: _ts(s["detected_at"]),
+            )
+            if not signals:
+                continue
+            contacts = [c for c in self.contacts if c["lead_id"] == str(lead_id)]
+            candidate = LeadCandidate.from_stored(lead, signals[0], contacts)
+            found.append(StoredLead(lead_id, candidate, [c["id"] for c in contacts]))
+            if len(found) >= limit:
+                break
+        return found
+
+    def save_assessment(self, stored: StoredLead, assessed: LeadCandidate) -> bool:
+        lead = self.leads.get(stored.lead_id)
+        if not lead or lead["status"] != "new" or lead.get("fit_score") is not None:
+            return False
+        lead.update(_assessed_lead_update(assessed))
+        updates, inserts = _contact_changes(stored, assessed)
+        by_id = {c["id"]: c for c in self.contacts}
+        for contact_id, row in updates:
+            by_id[contact_id].update(row)
+        self.contacts.extend({**row, "id": str(uuid4())} for row in inserts)
+        signal = self.signals[stored.candidate.signal.source_url]
+        signal["metadata"] = assessed.signal.metadata
+        if assessed.outreach:
+            own = [c for c in self.contacts if c["lead_id"] == str(stored.lead_id)]
+            self.outreach.append(
+                assessed.outreach.outreach_row(stored.lead_id, _outreach_contact(own))
+            )
+        self.activities.append(_scored_activity(stored.lead_id, assessed))
+        return True
 
     def create_lead(self, candidate: LeadCandidate) -> UUID:
         if candidate.domain and self.lead_id_for_domain(candidate.domain):
@@ -218,7 +386,8 @@ class MemoryRepository:
         ]
 
     def enabled_sources(self) -> list[str]:
-        return sorted({c.source.value for c in self.source_configs if c.enabled})
+        configs = {c.source.value for c in self.source_configs if c.enabled}
+        return expected_sources(configs, self.platforms, self.ai_on)
 
     def followups_due_count(self) -> int:
         now = datetime.now(UTC)
@@ -261,6 +430,38 @@ class DryRunRepository(MemoryRepository):
 
     def get_source_configs(self, source: str) -> list[SourceConfig]:
         return self._reader.get_source_configs(source) if self._reader else []
+
+    def get_platform_switches(self, source: str) -> dict[str, bool] | None:
+        return self._reader.get_platform_switches(source) if self._reader else None
+
+    def ai_enabled(self) -> bool:
+        return self._reader.ai_enabled() if self._reader else True
+
+    def record_platform_runs(self, runs: list[PlatformRun]) -> None:
+        for run in runs:
+            log.info(
+                "dry run: platform %s %s (seen %d, new %d)",
+                run.key, run.status, run.items_seen, run.leads_new,
+            )  # fmt: skip
+
+    def unscored_leads(self, source: str, limit: int) -> list[StoredLead]:
+        return self._reader.unscored_leads(source, limit) if self._reader else []
+
+    def save_assessment(self, stored: StoredLead, assessed: LeadCandidate) -> bool:
+        self._emit(
+            {
+                "action": "score_lead",
+                "lead_id": str(stored.lead_id),
+                "lead": _assessed_lead_update(assessed),
+                "contacts": [c.model_dump(mode="json") for c in assessed.contacts],
+                "outreach": assessed.outreach
+                and {
+                    **assessed.outreach.model_dump(mode="json", exclude={"body"}),
+                    "draft_body": assessed.outreach.draft_body,
+                },
+            }
+        )
+        return True
 
     def create_lead(self, candidate: LeadCandidate) -> UUID:
         lead_id = super().create_lead(candidate)
@@ -365,6 +566,93 @@ class SupabaseRepository:
             .data
         )
         return [SourceConfig.model_validate(row) for row in rows]
+
+    def _platforms(self, source: str | None = None) -> list[PlatformRow]:
+        query = self._db.table("source_platforms").select("key, source, enabled, needs_ai")
+        if source is not None:
+            query = query.eq("source", source)
+        return [PlatformRow(**row) for row in query.execute().data]
+
+    def get_platform_switches(self, source: str) -> dict[str, bool] | None:
+        if source not in LeadSource._value2member_map_:
+            return None
+        return {p.key: p.enabled for p in self._platforms(source)} or None
+
+    def ai_enabled(self) -> bool:
+        rows = self._db.table("app_settings").select("ai_enabled").limit(1).execute().data
+        return bool(rows[0]["ai_enabled"]) if rows else True
+
+    def record_platform_runs(self, runs: list[PlatformRun]) -> None:
+        for run in runs:
+            self._db.table("source_platforms").update(_platform_row(run)).eq(
+                "key", run.key
+            ).execute()
+
+    def unscored_leads(self, source: str, limit: int) -> list[StoredLead]:
+        rows = (
+            self._db.table("leads")
+            .select(
+                "*, signals(source, source_url, signal_type, title, raw_text, detected_at, "
+                "metadata, platform), contacts(*)"
+            )
+            .eq("first_source", source)
+            .eq("status", "new")
+            .is_("fit_score", "null")
+            .order("created_at")
+            .limit(limit)
+            .execute()
+            .data
+        )
+        found = []
+        for row in rows:
+            signals = sorted(
+                (s for s in row.get("signals") or [] if s["source"] == source),
+                key=lambda s: s["detected_at"],
+            )
+            if not signals:
+                log.warning("unscored lead %s has no %s signal; skipped", row["id"], source)
+                continue
+            contacts = sorted(row.get("contacts") or [], key=lambda c: c["created_at"])
+            candidate = LeadCandidate.from_stored(row, signals[0], contacts)
+            found.append(StoredLead(UUID(row["id"]), candidate, [c["id"] for c in contacts]))
+        return found
+
+    def save_assessment(self, stored: StoredLead, assessed: LeadCandidate) -> bool:
+        lead_id = str(stored.lead_id)
+        # Only while still new and unscored: the dashboard may have moved it on.
+        updated = (
+            self._db.table("leads")
+            .update(_assessed_lead_update(assessed))
+            .eq("id", lead_id)
+            .eq("status", "new")
+            .is_("fit_score", "null")
+            .execute()
+            .data
+        )
+        if not updated:
+            return False
+        updates, inserts = _contact_changes(stored, assessed)
+        for contact_id, row in updates:
+            self._db.table("contacts").update(row).eq("id", contact_id).execute()
+        if inserts:
+            self._db.table("contacts").insert(inserts).execute()
+        self._db.table("signals").update({"metadata": assessed.signal.metadata}).eq(
+            "source_url", stored.candidate.signal.source_url
+        ).execute()
+        if assessed.outreach:
+            contacts = (
+                self._db.table("contacts")
+                .select("id, is_primary, email, full_name")
+                .eq("lead_id", lead_id)
+                .order("created_at")
+                .execute()
+                .data
+            )
+            self._db.table("outreach").insert(
+                assessed.outreach.outreach_row(stored.lead_id, _outreach_contact(contacts))
+            ).execute()
+        self._db.table("activities").insert(_scored_activity(stored.lead_id, assessed)).execute()
+        return True
 
     def create_lead(self, candidate: LeadCandidate) -> UUID:
         # PostgREST has no multi-table transaction, so a failed insert after the
@@ -479,7 +767,8 @@ class SupabaseRepository:
 
     def enabled_sources(self) -> list[str]:
         rows = self._db.table("source_configs").select("source").eq("enabled", True).execute()
-        return sorted({row["source"] for row in rows.data})
+        configs = {row["source"] for row in rows.data}
+        return expected_sources(configs, self._platforms(), self.ai_enabled())
 
     def followups_due_count(self) -> int:
         result = self._db.table("v_followups_due").select("id", count="exact").limit(1).execute()

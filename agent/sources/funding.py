@@ -2,6 +2,9 @@
 Articles come from RSS feeds; Claude (cheap model) reads each one to find the
 company, its website, the round and the founders.
 
+Platforms (source_platforms; switched on/off in the dashboard): eu_startups,
+tech_funding_news, crunchbase_news - one per feed in rss_feeds.
+
 Config (source_configs.config):
   rss_feeds       [url]   funding news feeds (RSS 2.0)
   title_keywords  [str]   only articles whose title has one are read by AI
@@ -85,6 +88,7 @@ def to_candidate(
     extraction: FundingExtraction,
     rounds: Iterable[str],
     unnamed_round_max: float | None = None,
+    platform: str | None = None,
 ) -> LeadCandidate | None:
     """None when the article isn't one company's round in a wanted stage."""
     if not extraction.is_single_announcement or not extraction.company_name:
@@ -123,6 +127,7 @@ def to_candidate(
                 "source": "funding",
                 "source_url": item.url,
                 "signal_type": "funding_round",
+                "platform": platform,
                 "title": item.title,
                 "raw_text": truncate(text, ARTICLE_LIMIT) or None,
                 "metadata": {k: v for k, v in metadata.items() if v not in (None, [], "")},
@@ -146,6 +151,7 @@ def article_brief(item: FeedItem) -> str:
 class FundingNewsSource(Source):
     name = "funding"
     needs_ai = True
+    platforms = ("eu_startups", "tech_funding_news", "crunchbase_news")
     default_config: ClassVar[dict[str, Any]] = {
         # Full-text feeds with early-stage rounds. TechCrunch's feed only has
         # one-line summaries (no company links), so it isn't listed.
@@ -181,11 +187,17 @@ class FundingNewsSource(Source):
         now = datetime.now(UTC)
         with self.http_client() as client:
             for feed in feeds:
+                platform, enabled = self.feed_platform(feed)
+                if not enabled:
+                    continue
                 try:
                     items = parse_feed(get_with_retry(client, feed).content, self.report_error)
                 except (httpx.HTTPError, ET.ParseError, ValueError) as exc:
-                    self.report_error(f"feed failed: {type(exc).__name__}: {exc}", feed=feed)
+                    self.report_error(
+                        f"feed failed: {type(exc).__name__}: {exc}", feed=feed, platform=platform
+                    )
                     continue
+                self.fetched(platform)
                 fresh = [
                     i
                     for i in items
@@ -206,15 +218,24 @@ class FundingNewsSource(Source):
                             FundingExtraction,
                         )
                     except AIError as exc:
-                        self.report_error(f"article extraction failed: {exc}", url=item.url)
+                        self.report_error(
+                            f"article extraction failed: {exc}", url=item.url, platform=platform
+                        )
                         continue
                     try:
                         candidate = to_candidate(
-                            item, feed, extraction, rounds, config.get("unnamed_round_max")
+                            item,
+                            feed,
+                            extraction,
+                            rounds,
+                            config.get("unnamed_round_max"),
+                            platform,
                         )
                     except ValidationError as exc:
                         self.report_error(
-                            f"invalid funding item: {exc.error_count()} error(s)", url=item.url
+                            f"invalid funding item: {exc.error_count()} error(s)",
+                            url=item.url,
+                            platform=platform,
                         )
                         continue
                     if candidate is None:

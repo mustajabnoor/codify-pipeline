@@ -108,6 +108,8 @@ class SignalIn(BaseModel):
     raw_text: str | None = None
     detected_at: datetime = Field(default_factory=_utcnow)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # source_platforms.key: the board / feed / API it came from (RemoteOK, ...).
+    platform: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]*$")
 
     @field_validator("source_url")
     @classmethod
@@ -224,7 +226,15 @@ class LeadCandidate(BaseModel):
     def lead_row(self) -> dict[str, Any]:
         row = self.model_dump(mode="json", exclude={"signal", "contacts", "assessment", "outreach"})
         row["first_source"] = self.source.value
+        row["source_platform"] = self.signal.platform
         row["status"] = LeadStatus.NEW.value
+        row.update(self.assessment_fields())
+        return row
+
+    def assessment_fields(self) -> dict[str, Any]:
+        """Lead columns the AI step sets: score, reason, services, pain point,
+        best channel, and status rejected for a low score."""
+        row: dict[str, Any] = {}
         if self.assessment:
             row.update(self.assessment.model_dump(mode="json"))
             if self.assessment.is_reject:
@@ -232,6 +242,21 @@ class LeadCandidate(BaseModel):
         if self.outreach:
             row["best_channel"] = self.outreach.channel.value
         return row
+
+    @classmethod
+    def from_stored(
+        cls, lead: dict[str, Any], signal: dict[str, Any], contacts: list[dict[str, Any]]
+    ) -> "LeadCandidate":
+        """Rebuild a saved lead (with its first signal and contacts) so the AI
+        step can score it later: leads saved while AI was off."""
+        data = {field: lead.get(field) for field in _STORED_LEAD_FIELDS}
+        data["tech_stack"] = lead.get("tech_stack") or []
+        data["signal"] = {field: signal.get(field) for field in _STORED_SIGNAL_FIELDS}
+        data["signal"]["metadata"] = signal.get("metadata") or {}
+        data["contacts"] = [
+            {f: c[f] for f in ContactIn.model_fields if c.get(f) is not None} for c in contacts
+        ]
+        return cls.model_validate(data)
 
     def signal_row(self, lead_id: UUID) -> dict[str, Any]:
         return {**self.signal.model_dump(mode="json"), "lead_id": str(lead_id)}
@@ -244,6 +269,15 @@ class LeadCandidate(BaseModel):
                 row["is_primary"] = False
             rows.append(row)
         return rows
+
+
+_STORED_LEAD_FIELDS = (
+    "company_name", "website", "domain", "industry", "country", "city", "company_size",
+    "description", "funding_amount", "funding_round", "funding_date",
+)  # fmt: skip
+_STORED_SIGNAL_FIELDS = (
+    "source", "source_url", "signal_type", "title", "raw_text", "detected_at", "platform",
+)  # fmt: skip
 
 
 class SourceConfig(BaseModel):

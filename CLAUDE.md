@@ -68,6 +68,8 @@ README.md
 
 Search keywords, subreddits, cities, categories and job titles live in the `source_configs` table, **not in code**, so they can be edited from the dashboard.
 
+Each source collects from one or more **source platforms** (RemoteOK, We Work Remotely, EU-Startups, Reddit, ...), listed in the `source_platforms` table with an on/off switch on the dashboard's Sources page. Platforms not built yet are listed with `available = false` and can't be switched on (a check constraint enforces it); the migration that ships a platform flips it to available.
+
 ## 5. Pipeline (same for every source)
 
 ```
@@ -87,6 +89,8 @@ Enrichment runs after scoring (not before) so rejects and weak leads spend no lo
   - A failed lookup is recorded in `agent_runs.errors` and the lead is saved without a contact. A rejected key or used-up credits turns that provider off for the rest of the run (one error, so the run is `partial` and Slack alerts).
   - Real runs enrich when `HUNTER_API_KEY` is set (a missing key only logs a warning; a missing `MILLIONVERIFIER_API_KEY` leaves emails unverified). Dry runs enrich only with `--enrich`, so testing a source spends no credits.
 - **Every run** writes a row to `agent_runs` with counts and errors.
+- **Source platforms:** every lead and signal records its platform (`leads.source_platform` = the platform of the signal that created it, `signals.platform`), mapped from the feed's host in `agent/core/platforms.py` (`PLATFORM_HOSTS`; a test checks it against the migration). A collector lists its platforms in `Source.platforms` and skips feeds of platforms switched off; a feed from an unknown host is still read, with no platform. When every platform of a source is off, its run is a no-op. At the end of a run each platform that was on gets `last_run_at`, `last_run_status` (failed = its feed never answered, partial = some of its items failed), item / new-lead counts and its first error.
+- **Claude AI switch** (`app_settings.ai_enabled`, Sources page): off means runs still collect, but new leads are saved **unscored** (no score, draft or contact search), and sources that need AI to read (`needs_ai`, funding news) are skipped. Once it's back on, each run of a source then scores, enriches and drafts up to 20 (`BACKLOG_PER_RUN`) of its unscored `new` leads, oldest first (`score_backlog` in `agent/main.py`). Unscored = `fit_score is null and status = 'new'`; leads moved on by hand are left alone. Dry runs honour the switch too.
 - **Every collector supports `--dry-run`** (no DB writes, prints what it would insert as JSON lines; reads Supabase for dedupe when credentials are set).
 - **Company domain from text:** collectors whose source gives no website (job boards) take the company's domain from links in the post, accepting only hosts that contain the company name (`company_domain_from_text` in `agent/core/normalize.py`). When unsure it returns none: a wrong domain would merge two companies.
 - **Domain-less duplicates are accepted:** the same company reported by two sources without a domain (e.g. a funding round covered by two outlets, one without a company link) becomes two leads; merge or reject them in the dashboard. Matching by company name was considered and rejected (risk of merging different companies).
@@ -112,7 +116,7 @@ Implementation (`agent/ai/`):
 - Models: extraction `claude-haiku-5-5` (effort low); scoring + drafting `claude-opus-5-5` (effort medium) with server-side refusal fallbacks (`fallbacks: "default"`). Settings per task live in `TASKS` in `agent/ai/client.py`. Always `base_url="https://api.anthropic.com"`.
 - AI runs only for candidates that will become **new** leads (after dedupe and do-not-contact), so known companies and posts cost no tokens. Existing leads are not rescored.
 - Output is JSON via structured outputs, validated with pydantic (`agent/ai/schemas.py`); an invalid answer is retried once. If any AI step fails for an item, the item is **not saved** and the error goes to `agent_runs.errors`; the next run retries it. A rejected key or unknown model stops the run.
-- Real runs require the Anthropic key. Dry runs skip AI when there's no key or with `--no-ai`.
+- Real runs require the Anthropic key, unless Claude AI is switched off in the dashboard (§5): then leads are saved unscored and scored by a later run. Dry runs skip AI when there's no key or with `--no-ai`.
 - Proof points: drafts may only cite what is in `agent/ai/prompts/company_profile.md`; keep that file current.
 - The sign-off and opt-out line (`SIGN_OFF` in `agent/core/models.py`) are appended by code to every draft and don't count toward the 100 words.
 - Sources that need AI to read their items (`needs_ai`, e.g. funding news) extract with their own prompt (`funding_extract_v1`, Haiku) before dedupe, skip article URLs already stored, and cap reads per run (`max_articles`). The generic extract step is then skipped. These sources can't run with `--no-ai`.
@@ -142,6 +146,9 @@ Write schema as SQL migrations in `/supabase/migrations` (named `YYYYMMDDHHMMSS_
 - `source_configs` — source, name, config jsonb (keywords, subreddits, cities, categories…), schedule text, enabled bool, last_run_at
 - `agent_runs` — source (text: lead sources plus non-collector jobs like `fixture`), started_at, finished_at, status run_status, items_seen, leads_new, leads_updated, leads_skipped, errors jsonb, tokens_used, cost_estimate
 - `do_not_contact` — email, domain, reason, created_at
+- `source_platforms` — key (PK, e.g. `remoteok`), source, name, available, enabled, needs_ai, sort_order, last_run_at, last_run_status, last_run_items, last_run_leads_new, last_run_error, updated_by. Team members may only update `enabled` / `updated_by` (column grants); the agent writes the run fields.
+- `app_settings` — one row (`id = true`): ai_enabled, updated_by. Team members may only update `ai_enabled` / `updated_by`.
+- `leads.source_platform` and `signals.platform` reference `source_platforms(key)`.
 
 **Views** (for the dashboard)
 - `v_source_performance` — per `first_source` (all 7 listed, even with 0 leads): leads, approved, contacted, replied, meetings, won, reply rate, win rate. Stages are cumulative (a lead in `meeting` also counts as contacted and replied); reply/win rate are over contacted
@@ -170,7 +177,9 @@ Implementation (`dashboard/`, details in `dashboard/README.md`):
 - Leads list (`src/app/(app)/leads/`): filters live in the URL (`src/lib/leads/filters.ts`) and one query builder serves the list and the export (`src/lib/leads/query.ts`). Bulk approve/reject only changes leads still in `new` / `reviewing` (others count as skipped); approving also sets the lead's `draft` outreach to `approved`. Nothing is sent.
 - Lead detail (`/leads/[id]`): approving (any status) also approves the lead's draft, saving unsaved edits first; the status menu sets any status. Draft edits go to `outreach.final_body` (`draft_body` keeps the AI's original); the sign-off with the opt-out line is shown read-only and always re-appended by code (`src/lib/outreach.ts` mirrors `SIGN_OFF`, and a test checks they match). Only `draft` / `approved` outreach can be edited. Follow-up dates are picked as a day and stored as 09:00 Asia/Karachi.
 - Today (`/`): new leads and 8+ leads today come from `v_daily_stats` for today's Karachi date; follow-ups due from `v_followups_due`; "replies waiting" counts leads in status `replied` (until reply import in Phase 5). Top new leads = the 10 best-scored `new` leads from the last 24h.
-- Agent health (`/health`): runs from the last 7 days per source (enabled sources always listed; `fixture` hidden), last run's counts, tokens, cost and errors, and the same "no run in 26h" warning as the Slack summary (`src/lib/health.ts`).
+- Sources (`/sources`, `src/app/(app)/sources/`): the Claude API switch (with how many leads wait to be scored), then each source's platforms with an on/off switch, last run time, status, counts and error. Planned platforms show "Not available" with a locked switch; funding platforms show "Paused: needs Claude" while AI is off. Switches apply from the next scheduled run. "Run now" and config editing come later.
+- Leads list, lead detail and export show the platform ("Job posting via RemoteOK").
+- Agent health (`/health`): runs from the last 7 days per source (enabled sources always listed; `fixture` hidden), last run's counts, tokens, cost and errors, and the same "no run in 26h" warning as the Slack summary (`src/lib/health.ts`). Sources with every platform off, or paused while AI is off, aren't flagged (`expectedSources` in `src/lib/platforms.ts` mirrors `expected_sources` in `agent/core/db.py`).
 - Export (`/leads/export?format=xlsx|csv&<filters>`): all matching leads up to 5,000, one row per lead with the primary contact and the latest draft (edited `final_body` if any, else `draft_body`). CSV neutralises cells that spreadsheets would run as formulas. `.xlsx` uses exceljs (its old `uuid` is overridden in `package.json`).
 - `src/lib/database.types.ts` is generated from the migrations (`npm run gen:types`); CI fails when it's stale.
 - Hosting: Vercel project in the owner's own Vercel account (not the client account linked to the same GitHub login), root directory `dashboard`, deploying `main` to production. Env vars: Production = pipeline-prod URL + anon key; Preview = pipeline-dev. pipeline-prod Supabase Auth: Site URL `https://pipeline.codify-labs.com`, redirect URL `https://pipeline.codify-labs.com/**`; users added in Auth → Users and `team_members`.
@@ -189,10 +198,10 @@ Current schedule (cron in UTC → Asia/Karachi):
 | `daily-summary.yml` | `15 4 * * *` | 09:15 | `python -m agent summary` |
 
 - Source workflows call the shared `run-source.yml` (`workflow_call`); a new source only needs a small caller file with its cron and a `concurrency` group. Manual runs have a `dry_run` checkbox.
-- **GitHub cron is the source of truth** for when a source runs; `source_configs.schedule` is informational until the dashboard's "Run now" (Phase 3) triggers workflows. `enabled = false` in `source_configs` still makes a scheduled run a no-op.
+- **GitHub cron is the source of truth** for when a source runs; `source_configs.schedule` is informational until the dashboard's "Run now" (Phase 3) triggers workflows. `enabled = false` in `source_configs` still makes a scheduled run a no-op, and so does switching every platform of a source off.
 - Required GitHub Actions secrets (prod values): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `SLACK_WEBHOOK_URL`. Enrichment: `HUNTER_API_KEY`, `MILLIONVERIFIER_API_KEY` (optional; without them leads are saved with no contact / unverified emails).
 - **Slack alerts** (`agent/core/slack.py`): a real run that ends `failed` or `partial` (or can't start, e.g. missing secrets) posts one alert with counts, the first 5 errors and a link to the Actions run. Successful and dry runs post nothing. Posting never raises, and the webhook URL is never logged.
-- **Daily summary** (`agent/summary.py`): new leads in the last 24h per source, 8+ count, auto-rejected count, top 5 leads, last run per enabled source (flagged when a source hasn't run in 26h), follow-ups due and AI cost. A quiet day still posts, so silence means the summary itself failed. `python -m agent summary --dry-run` prints the message instead of posting it.
+- **Daily summary** (`agent/summary.py`): new leads in the last 24h per source, 8+ count, auto-rejected count, top 5 leads, last run per enabled source (flagged when a source hasn't run in 26h; sources switched off or paused aren't), follow-ups due and AI cost. While Claude AI is off it says so. A quiet day still posts, so silence means the summary itself failed. `python -m agent summary --dry-run` prints the message instead of posting it.
 
 ## 10. Environment variables (document all in `.env.example`, never commit real values)
 
@@ -246,6 +255,7 @@ Two dev and prod Supabase projects exist: **pipeline-dev** (Claude Code cloud se
   - 3.3 Lead detail: contacts, signals, editable draft, approve/reject/status, notes, timeline (done)
   - 3.4 Today KPIs + Agent health (done)
   - 3.5 Vercel deploy (done; live at https://pipeline.codify-labs.com since 2026-10-30, signed in with magic link)
+  - 3.6 Source platforms: platform on every lead/signal, Sources page with per-platform switches + last run, Claude API switch with score-later (done; migration `20261102100000_source_platforms.sql` must be applied to dev and prod before the code runs)
 - **Phase 4 — More sources:** Social listening, Product launches, then Google Maps, Tech-stack, Agency partners.
 - **Phase 5 — Outreach:** push approved leads to Instantly/Smartlead, reply import + AI reply categorization, follow-up reminders, source performance view.
 

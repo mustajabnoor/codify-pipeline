@@ -40,6 +40,7 @@ class DailySummary:
     tokens: int = 0
     cost: Decimal = Decimal("0")
     followups_due: int = 0
+    ai_enabled: bool = True
 
     @property
     def total_new(self) -> int:
@@ -81,6 +82,7 @@ def build_summary(reader: ReportReader, now: datetime) -> DailySummary:
     summary.tokens = sum(r.tokens_used for r in in_window)
     summary.cost = sum((r.cost_estimate for r in in_window), Decimal("0"))
     summary.followups_due = reader.followups_due_count()
+    summary.ai_enabled = reader.ai_enabled()
     return summary
 
 
@@ -115,6 +117,13 @@ def summary_payload(summary: DailySummary, *, test: bool = False) -> Payload:
         {"type": "header", "text": {"type": "plain_text", "text": title}},
         {"type": "section", "text": {"type": "mrkdwn", "text": overview}},
     ]
+    if not summary.ai_enabled:
+        note = (
+            ":pause_button: *Claude AI is switched off.* New leads are saved without "
+            "score, draft or contact, and funding news is paused. Switch it back on "
+            "under Sources; the next runs score the waiting leads."
+        )
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": note}})
     if summary.top:
         lines = "\n".join(_lead_line(lead) for lead in summary.top)
         blocks.append(

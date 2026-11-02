@@ -5,7 +5,6 @@ insert into public.source_configs (source, name, config, schedule, enabled) valu
 (
   'job_posting', 'default',
   '{
-    "remoteok": true,
     "rss_feeds": ["https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss",
                   "https://weworkremotely.com/categories/remote-front-end-programming-jobs.rss"],
     "title_keywords": ["bubble", "shopify", "react", "next.js", "full stack", "fullstack",

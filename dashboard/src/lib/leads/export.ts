@@ -19,6 +19,8 @@ export type ExportLead = {
   fit_score: number | null;
   status: LeadStatus;
   first_source: LeadSource;
+  /** The source platform's row (RemoteOK, EU-Startups...), if known. */
+  source_platforms: { name: string } | null;
   service_fit: Service[] | null;
   country: string | null;
   city: string | null;
@@ -50,6 +52,7 @@ export const EXPORT_COLUMNS = [
   "Score",
   "Status",
   "Source",
+  "Platform",
   "Services",
   "Country",
   "City",
@@ -84,6 +87,7 @@ export function exportRow(lead: ExportLead, siteUrl: string): Cell[] {
     lead.fit_score,
     STATUS_LABELS[lead.status],
     SOURCE_LABELS[lead.first_source],
+    lead.source_platforms?.name ?? null,
     (lead.service_fit ?? []).map((s) => SERVICE_LABELS[s]).join(", "),
     lead.country,
     lead.city,
