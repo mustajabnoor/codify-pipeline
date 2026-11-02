@@ -46,6 +46,20 @@ isOneToOne: false
                   Relationships: [
                     
                   ]
+                },"app_settings": {
+                  Row: {
+                    "ai_enabled": boolean,"created_at": string,"id": boolean,"updated_at": string,"updated_by": string | null
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "ai_enabled"?: boolean,"created_at"?: string,"id"?: boolean,"updated_at"?: string,"updated_by"?: string | null
+                  }
+                  Update: {
+                    "ai_enabled"?: boolean,"created_at"?: string,"id"?: boolean,"updated_at"?: string,"updated_by"?: string | null
+                  }
+                  Relationships: [
+                    
+                  ]
                 },"contacts": {
                   Row: {
                     "created_at": string,"email": string | null,"email_status": Database["public"]['Enums']["email_status"],"found_via": string | null,"full_name": string | null,"id": string,"is_primary": boolean,"lead_id": string,"linkedin_url": string | null,"other_url": string | null,"phone": string | null,"role": string | null,"updated_at": string,"whatsapp": string | null,"x_url": string | null
@@ -88,17 +102,23 @@ isOneToOne: false
                   ]
                 },"leads": {
                   Row: {
-                    "best_channel": Database["public"]['Enums']["channel"] | null,"city": string | null,"company_name": string,"company_size": string | null,"country": string | null,"created_at": string,"description": string | null,"domain": string | null,"first_source": Database["public"]['Enums']["lead_source"],"fit_score": number | null,"funding_amount": number | null,"funding_date": string | null,"funding_round": string | null,"id": string,"industry": string | null,"last_contacted_at": string | null,"next_follow_up_at": string | null,"notes": string | null,"owner": string | null,"pain_point": string | null,"score_reason": string | null,"service_fit": (Database["public"]['Enums']["service"])[],"status": Database["public"]['Enums']["lead_status"],"tech_stack": (string)[],"updated_at": string,"website": string | null
+                    "best_channel": Database["public"]['Enums']["channel"] | null,"city": string | null,"company_name": string,"company_size": string | null,"country": string | null,"created_at": string,"description": string | null,"domain": string | null,"first_source": Database["public"]['Enums']["lead_source"],"fit_score": number | null,"funding_amount": number | null,"funding_date": string | null,"funding_round": string | null,"id": string,"industry": string | null,"last_contacted_at": string | null,"next_follow_up_at": string | null,"notes": string | null,"owner": string | null,"pain_point": string | null,"score_reason": string | null,"service_fit": (Database["public"]['Enums']["service"])[],"source_platform": string | null,"status": Database["public"]['Enums']["lead_status"],"tech_stack": (string)[],"updated_at": string,"website": string | null
                   }
                   ComputedFields: never
                   Insert: {
-                    "best_channel"?: Database["public"]['Enums']["channel"] | null,"city"?: string | null,"company_name": string,"company_size"?: string | null,"country"?: string | null,"created_at"?: string,"description"?: string | null,"domain"?: string | null,"first_source": Database["public"]['Enums']["lead_source"],"fit_score"?: number | null,"funding_amount"?: number | null,"funding_date"?: string | null,"funding_round"?: string | null,"id"?: string,"industry"?: string | null,"last_contacted_at"?: string | null,"next_follow_up_at"?: string | null,"notes"?: string | null,"owner"?: string | null,"pain_point"?: string | null,"score_reason"?: string | null,"service_fit"?: (Database["public"]['Enums']["service"])[],"status"?: Database["public"]['Enums']["lead_status"],"tech_stack"?: (string)[],"updated_at"?: string,"website"?: string | null
+                    "best_channel"?: Database["public"]['Enums']["channel"] | null,"city"?: string | null,"company_name": string,"company_size"?: string | null,"country"?: string | null,"created_at"?: string,"description"?: string | null,"domain"?: string | null,"first_source": Database["public"]['Enums']["lead_source"],"fit_score"?: number | null,"funding_amount"?: number | null,"funding_date"?: string | null,"funding_round"?: string | null,"id"?: string,"industry"?: string | null,"last_contacted_at"?: string | null,"next_follow_up_at"?: string | null,"notes"?: string | null,"owner"?: string | null,"pain_point"?: string | null,"score_reason"?: string | null,"service_fit"?: (Database["public"]['Enums']["service"])[],"source_platform"?: string | null,"status"?: Database["public"]['Enums']["lead_status"],"tech_stack"?: (string)[],"updated_at"?: string,"website"?: string | null
                   }
                   Update: {
-                    "best_channel"?: Database["public"]['Enums']["channel"] | null,"city"?: string | null,"company_name"?: string,"company_size"?: string | null,"country"?: string | null,"created_at"?: string,"description"?: string | null,"domain"?: string | null,"first_source"?: Database["public"]['Enums']["lead_source"],"fit_score"?: number | null,"funding_amount"?: number | null,"funding_date"?: string | null,"funding_round"?: string | null,"id"?: string,"industry"?: string | null,"last_contacted_at"?: string | null,"next_follow_up_at"?: string | null,"notes"?: string | null,"owner"?: string | null,"pain_point"?: string | null,"score_reason"?: string | null,"service_fit"?: (Database["public"]['Enums']["service"])[],"status"?: Database["public"]['Enums']["lead_status"],"tech_stack"?: (string)[],"updated_at"?: string,"website"?: string | null
+                    "best_channel"?: Database["public"]['Enums']["channel"] | null,"city"?: string | null,"company_name"?: string,"company_size"?: string | null,"country"?: string | null,"created_at"?: string,"description"?: string | null,"domain"?: string | null,"first_source"?: Database["public"]['Enums']["lead_source"],"fit_score"?: number | null,"funding_amount"?: number | null,"funding_date"?: string | null,"funding_round"?: string | null,"id"?: string,"industry"?: string | null,"last_contacted_at"?: string | null,"next_follow_up_at"?: string | null,"notes"?: string | null,"owner"?: string | null,"pain_point"?: string | null,"score_reason"?: string | null,"service_fit"?: (Database["public"]['Enums']["service"])[],"source_platform"?: string | null,"status"?: Database["public"]['Enums']["lead_status"],"tech_stack"?: (string)[],"updated_at"?: string,"website"?: string | null
                   }
                   Relationships: [
-                    
+                    {
+      foreignKeyName: "leads_source_platform_fkey"
+      columns: ["source_platform"]
+isOneToOne: false
+      referencedRelation: "source_platforms"
+      referencedColumns: ["key"]
+    }
                   ]
                 },"outreach": {
                   Row: {
@@ -134,14 +154,14 @@ isOneToOne: false
                   ]
                 },"signals": {
                   Row: {
-                    "created_at": string,"detected_at": string,"id": string,"lead_id": string,"metadata": NonNullable<Json>,"raw_text": string | null,"signal_type": string,"source": Database["public"]['Enums']["lead_source"],"source_url": string,"title": string | null,"updated_at": string
+                    "created_at": string,"detected_at": string,"id": string,"lead_id": string,"metadata": NonNullable<Json>,"platform": string | null,"raw_text": string | null,"signal_type": string,"source": Database["public"]['Enums']["lead_source"],"source_url": string,"title": string | null,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"detected_at"?: string,"id"?: string,"lead_id": string,"metadata"?: NonNullable<Json>,"raw_text"?: string | null,"signal_type": string,"source": Database["public"]['Enums']["lead_source"],"source_url": string,"title"?: string | null,"updated_at"?: string
+                    "created_at"?: string,"detected_at"?: string,"id"?: string,"lead_id": string,"metadata"?: NonNullable<Json>,"platform"?: string | null,"raw_text"?: string | null,"signal_type": string,"source": Database["public"]['Enums']["lead_source"],"source_url": string,"title"?: string | null,"updated_at"?: string
                   }
                   Update: {
-                    "created_at"?: string,"detected_at"?: string,"id"?: string,"lead_id"?: string,"metadata"?: NonNullable<Json>,"raw_text"?: string | null,"signal_type"?: string,"source"?: Database["public"]['Enums']["lead_source"],"source_url"?: string,"title"?: string | null,"updated_at"?: string
+                    "created_at"?: string,"detected_at"?: string,"id"?: string,"lead_id"?: string,"metadata"?: NonNullable<Json>,"platform"?: string | null,"raw_text"?: string | null,"signal_type"?: string,"source"?: Database["public"]['Enums']["lead_source"],"source_url"?: string,"title"?: string | null,"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -156,6 +176,12 @@ isOneToOne: false
 isOneToOne: false
       referencedRelation: "v_followups_due"
       referencedColumns: ["id"]
+    },{
+      foreignKeyName: "signals_platform_fkey"
+      columns: ["platform"]
+isOneToOne: false
+      referencedRelation: "source_platforms"
+      referencedColumns: ["key"]
     }
                   ]
                 },"source_configs": {
@@ -168,6 +194,20 @@ isOneToOne: false
                   }
                   Update: {
                     "config"?: NonNullable<Json>,"created_at"?: string,"enabled"?: boolean,"id"?: string,"last_run_at"?: string | null,"name"?: string,"schedule"?: string | null,"source"?: Database["public"]['Enums']["lead_source"],"updated_at"?: string
+                  }
+                  Relationships: [
+                    
+                  ]
+                },"source_platforms": {
+                  Row: {
+                    "available": boolean,"created_at": string,"enabled": boolean,"key": string,"last_run_at": string | null,"last_run_error": string | null,"last_run_items": number | null,"last_run_leads_new": number | null,"last_run_status": Database["public"]['Enums']["run_status"] | null,"name": string,"needs_ai": boolean,"sort_order": number,"source": Database["public"]['Enums']["lead_source"],"updated_at": string,"updated_by": string | null
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "available"?: boolean,"created_at"?: string,"enabled"?: boolean,"key": string,"last_run_at"?: string | null,"last_run_error"?: string | null,"last_run_items"?: number | null,"last_run_leads_new"?: number | null,"last_run_status"?: Database["public"]['Enums']["run_status"] | null,"name": string,"needs_ai"?: boolean,"sort_order"?: number,"source": Database["public"]['Enums']["lead_source"],"updated_at"?: string,"updated_by"?: string | null
+                  }
+                  Update: {
+                    "available"?: boolean,"created_at"?: string,"enabled"?: boolean,"key"?: string,"last_run_at"?: string | null,"last_run_error"?: string | null,"last_run_items"?: number | null,"last_run_leads_new"?: number | null,"last_run_status"?: Database["public"]['Enums']["run_status"] | null,"name"?: string,"needs_ai"?: boolean,"sort_order"?: number,"source"?: Database["public"]['Enums']["lead_source"],"updated_at"?: string,"updated_by"?: string | null
                   }
                   Relationships: [
                     

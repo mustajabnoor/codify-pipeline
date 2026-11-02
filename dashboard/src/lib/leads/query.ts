@@ -9,9 +9,10 @@ import { type LeadFilters, PAGE_SIZE } from "./filters";
 type Client = SupabaseClient<Database>;
 
 const LEAD_COLUMNS = `
-  id, company_name, domain, website, fit_score, status, first_source, service_fit,
+  id, company_name, domain, website, fit_score, status, first_source, source_platform, service_fit,
   country, city, industry, company_size, owner, pain_point, score_reason,
   funding_round, funding_amount, created_at,
+  source_platforms(name),
   contacts(full_name, role, email, email_status, linkedin_url, is_primary),
   outreach(subject, draft_body, final_body, status, created_at)
 `;

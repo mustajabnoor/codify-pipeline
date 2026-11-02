@@ -9,7 +9,16 @@ from postgrest.exceptions import APIError
 
 from agent.core.db import SupabaseRepository
 from agent.core.errors import DuplicateLeadError, DuplicateSignalError
-from agent.core.models import OutreachDraft, RunStats, RunStatus
+from agent.core.models import (
+    Channel,
+    ContactIn,
+    LeadAssessment,
+    OutreachDraft,
+    RunStats,
+    RunStatus,
+    Service,
+)
+from agent.core.platforms import PlatformRun
 
 from .conftest import make_candidate
 
@@ -53,6 +62,13 @@ class FakeQuery:
 
     def in_(self, column: str, values: list[Any]) -> "FakeQuery":
         self.call.filters.append(("in", column, values))
+        return self
+
+    def is_(self, column: str, value: Any) -> "FakeQuery":
+        self.call.filters.append(("is", column, value))
+        return self
+
+    def order(self, column: str, **_: Any) -> "FakeQuery":
         return self
 
     def limit(self, _: int) -> "FakeQuery":
@@ -251,3 +267,121 @@ def test_failed_outreach_insert_removes_the_lead(
     with pytest.raises(APIError):
         repo.create_lead(candidate)
     assert (client.calls[-1].table, client.calls[-1].op) == ("leads", "delete")
+
+
+def test_platform_switches_and_ai_setting(client: FakeClient, repo: SupabaseRepository) -> None:
+    assert repo.get_platform_switches("fixture") is None
+    assert repo.get_platform_switches("job_posting") is None  # no rows
+    client.responses[("source_platforms", "select")] = [
+        {"key": "remoteok", "source": "job_posting", "enabled": False, "needs_ai": False},
+    ]
+    assert repo.get_platform_switches("job_posting") == {"remoteok": False}
+    assert repo.ai_enabled() is True  # no settings row
+    client.responses[("app_settings", "select")] = [{"ai_enabled": False}]
+    assert repo.ai_enabled() is False
+
+
+def test_record_platform_runs(client: FakeClient, repo: SupabaseRepository) -> None:
+    repo.record_platform_runs(
+        [PlatformRun("remoteok", items_seen=4, leads_new=1, fetched=True, errors=["bad item"])]
+    )
+    (call,) = client.calls
+    assert (call.table, call.op, call.filters) == (
+        "source_platforms",
+        "update",
+        [("eq", "key", "remoteok")],
+    )
+    assert call.payload["last_run_status"] == "partial"
+    assert (call.payload["last_run_items"], call.payload["last_run_leads_new"]) == (4, 1)
+    assert call.payload["last_run_error"] == "bad item"
+
+
+def stored_lead_row() -> dict[str, Any]:
+    return {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "company_name": "Acme",
+        "domain": "acme.com",
+        "website": "https://acme.com",
+        "tech_stack": [],
+        "signals": [
+            {
+                "source": "funding",
+                "source_url": "https://news.example.com/other",
+                "signal_type": "funding_round",
+                "detected_at": "2026-10-01T00:00:00+00:00",
+                "metadata": {},
+            },
+            {
+                "source": "job_posting",
+                "source_url": "https://remoteok.com/remote-jobs/2",
+                "signal_type": "job_post",
+                "detected_at": "2026-10-03T00:00:00+00:00",
+                "metadata": {},
+                "platform": "remoteok",
+            },
+        ],
+        "contacts": [
+            {
+                "id": "c1",
+                "full_name": "Dana Lee",
+                "role": "CTO",
+                "email": None,
+                "email_status": "unverified",
+                "is_primary": False,
+                "created_at": "2026-10-03T00:00:00+00:00",
+            }
+        ],
+    }
+
+
+def test_unscored_leads(client: FakeClient, repo: SupabaseRepository) -> None:
+    client.responses[("leads", "select")] = [stored_lead_row()]
+    (stored,) = repo.unscored_leads("job_posting", 5)
+    (call,) = client.calls
+    assert ("is", "fit_score", "null") in call.filters
+    assert ("eq", "status", "new") in call.filters
+    assert stored.candidate.signal.platform == "remoteok"  # its job_posting signal
+    assert stored.contact_ids == ["c1"]
+    assert stored.candidate.contacts[0].full_name == "Dana Lee"
+
+
+def test_save_assessment(client: FakeClient, repo: SupabaseRepository) -> None:
+    client.responses[("leads", "select")] = [stored_lead_row()]
+    (stored,) = repo.unscored_leads("job_posting", 5)
+    client.calls.clear()
+    assessed = stored.candidate.model_copy(
+        update={
+            "assessment": LeadAssessment(
+                fit_score=8, score_reason="r", service_fit=[Service.MVP], pain_point="p"
+            ),
+            "outreach": OutreachDraft(channel=Channel.EMAIL, subject="s", body="b"),
+            "contacts": [
+                stored.candidate.contacts[0].model_copy(update={"email": "dana@acme.com"}),
+                ContactIn(full_name="Info", email="info@acme.com"),
+            ],
+        }
+    )
+    # The lead was scored or moved on meanwhile: nothing else is written.
+    assert repo.save_assessment(stored, assessed) is False
+    assert client.ops() == [("leads", "update")]
+
+    client.calls.clear()
+    client.responses[("leads", "update")] = [{"id": str(stored.lead_id)}]
+    client.responses[("contacts", "select")] = [
+        {"id": "c1", "is_primary": False, "email": "dana@acme.com", "full_name": "Dana Lee"}
+    ]
+    assert repo.save_assessment(stored, assessed) is True
+    assert client.ops() == [
+        ("leads", "update"),
+        ("contacts", "update"),
+        ("contacts", "insert"),
+        ("signals", "update"),
+        ("contacts", "select"),
+        ("outreach", "insert"),
+        ("activities", "insert"),
+    ]
+    lead_update = client.calls[0]
+    assert lead_update.payload["fit_score"] == 8 and lead_update.payload["best_channel"] == "email"
+    assert client.calls[1].payload["email"] == "dana@acme.com"
+    assert client.calls[1].filters == [("eq", "id", "c1")]
+    assert client.calls[5].payload["contact_id"] == "c1"

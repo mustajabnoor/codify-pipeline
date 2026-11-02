@@ -13,8 +13,9 @@ function leadQuery(supabase: Client, id: string) {
     .from("leads")
     .select(
       `*,
+      source_platforms(name),
       contacts(*),
-      signals(id, source, source_url, signal_type, title, raw_text, detected_at, metadata),
+      signals(id, source, platform, source_url, signal_type, title, raw_text, detected_at, metadata, source_platforms(name)),
       outreach(*),
       activities(id, type, note, actor, created_at)`,
     )

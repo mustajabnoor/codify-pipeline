@@ -2,8 +2,10 @@
 full-stack, mobile...). Boards: RemoteOK's JSON API and RSS feeds in We Work
 Remotely's format ("Company: Position" titles).
 
+Platforms (source_platforms; switched on/off in the dashboard): remoteok
+(https://remoteok.com/api), weworkremotely (the WWR feeds in rss_feeds).
+
 Config (source_configs.config):
-  remoteok          bool       read https://remoteok.com/api
   rss_feeds         [url]      WWR-style RSS feeds
   title_keywords    [str]      keep a post if its title has one (board tags are
                                too noisy to match on; they go in metadata)
@@ -162,7 +164,7 @@ class Filters:
         return not has_phrase(text, self.exclude_keywords)
 
 
-def to_candidate(post: JobPost, feed: str) -> LeadCandidate:
+def to_candidate(post: JobPost, feed: str, platform: str | None = None) -> LeadCandidate:
     text = html_to_text(post.description_html)
     domain = company_domain_from_text(post.company, text)
     metadata = {
@@ -180,6 +182,7 @@ def to_candidate(post: JobPost, feed: str) -> LeadCandidate:
                 "source": "job_posting",
                 "source_url": post.url,
                 "signal_type": "job_post",
+                "platform": platform,
                 "title": post.title,
                 "raw_text": truncate(text, RAW_TEXT_LIMIT) or None,
                 "metadata": {k: v for k, v in metadata.items() if v not in (None, [], "")},
@@ -193,8 +196,8 @@ Parser = Callable[[httpx.Response, ErrorReporter], list[JobPost]]
 
 class JobPostingsSource(Source):
     name = "job_posting"
+    platforms = ("remoteok", "weworkremotely")
     default_config: ClassVar[dict[str, Any]] = {
-        "remoteok": True,
         "rss_feeds": [
             "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss",
             "https://weworkremotely.com/categories/remote-front-end-programming-jobs.rss",
@@ -210,7 +213,9 @@ class JobPostingsSource(Source):
     }  # fmt: skip
 
     def _feeds(self, config: dict[str, Any]) -> Iterator[tuple[str, Parser]]:
-        if config.get("remoteok"):
+        # RemoteOK is read unless its platform is switched off. ("remoteok":
+        # false in the config is the old switch, still honoured.)
+        if config.get("remoteok", True):
             yield REMOTEOK_API, lambda r, report: parse_remoteok(r.json(), report)
         for url in config.get("rss_feeds") or []:
             yield url, lambda r, report: parse_rss(r.content, report)
@@ -222,17 +227,25 @@ class JobPostingsSource(Source):
             return
         with self.http_client() as client:
             for feed, parse in self._feeds(config):
+                platform, enabled = self.feed_platform(feed)
+                if not enabled:
+                    continue
                 try:
                     posts = parse(get_with_retry(client, feed), self.report_error)
                 except (httpx.HTTPError, ValueError, ET.ParseError) as exc:
-                    self.report_error(f"feed failed: {type(exc).__name__}: {exc}", feed=feed)
+                    self.report_error(
+                        f"feed failed: {type(exc).__name__}: {exc}", feed=feed, platform=platform
+                    )
                     continue
+                self.fetched(platform)
                 relevant = [p for p in posts if filters.matches(p)]
                 self.log.info("%s: %d posts, %d relevant", feed, len(posts), len(relevant))
                 for post in relevant:
                     try:
-                        yield to_candidate(post, feed)
+                        yield to_candidate(post, feed, platform)
                     except ValidationError as exc:
                         self.report_error(
-                            f"invalid job post: {exc.error_count()} error(s)", url=post.url
+                            f"invalid job post: {exc.error_count()} error(s)",
+                            url=post.url,
+                            platform=platform,
                         )

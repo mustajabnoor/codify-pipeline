@@ -15,10 +15,11 @@ from agent.ai.assess import Assessor
 from agent.ai.client import AIClient, ClaudeAI
 from agent.core.config import Settings
 from agent.core.db import DryRunRepository, Repository, SupabaseRepository
+from agent.core.dedupe import Action
 from agent.core.errors import AgentError, FatalRunError
 from agent.core.log import setup_logging
 from agent.core.models import RunError, RunStats, RunStatus
-from agent.core.pipeline import process_candidate
+from agent.core.pipeline import Assess, process_candidate
 from agent.core.runs import RunRecorder
 from agent.core.slack import SlackNotifier
 from agent.enrich.enricher import Enricher
@@ -31,6 +32,9 @@ log = logging.getLogger("agent")
 
 # Called after a real run that failed or partly failed: (source, status, stats).
 RunNotify = Callable[[str, str, RunStats], None]
+# Leads saved while AI was off that one run scores once it's back on; the
+# rest wait for the next run.
+BACKLOG_PER_RUN = 20
 
 
 def build_repository(settings: Settings, *, dry_run: bool) -> Repository:
@@ -77,9 +81,14 @@ def build_assessor(
     no_ai: bool,
     ai: AIClient | None,
     enricher: Enricher | None = None,
+    ai_switched_off: bool = False,
 ) -> Assessor | None:
-    """AI scoring is required for real runs, so no unscored lead reaches the
-    database. Dry runs skip it when asked (--no-ai) or when there is no key."""
+    """Real runs score every new lead, unless Claude AI is switched off in the
+    dashboard: then leads are saved unscored and scored by a later run. Dry
+    runs also skip it when asked (--no-ai) or when there is no key."""
+    if ai_switched_off:
+        log.info("Claude AI is switched off: leads are saved without score, draft or contact")
+        return None
     if no_ai:
         log.info("AI off (--no-ai): leads are not scored, drafted or enriched")
         return None
@@ -119,12 +128,32 @@ def run_source(
         if configs and not any(c.enabled for c in configs):
             log.info("source %s is disabled in source_configs; nothing to do", name)
             return RunStatus.SUCCESS
+        platforms = enabled_platforms(source_cls, repo)
+        if source_cls.platforms and platforms is not None and not platforms:
+            log.info("every platform of %s is switched off; nothing to do", name)
+            return RunStatus.SUCCESS
+        ai_switched_off = not repo.ai_enabled()
+        if ai_switched_off and source_cls.needs_ai:
+            log.info("source %s needs Claude AI to read its items; paused while AI is off", name)
+            return RunStatus.SUCCESS
         config_dicts = [c.config for c in configs if c.enabled] or [source_cls.default_config]
         with run:
-            if enricher is None and not no_ai:
+            run.track_platforms(source_cls.platforms if platforms is None else platforms)
+            if enricher is None and not no_ai and not ai_switched_off:
                 enricher = build_enricher(settings, repo, run, dry_run=dry_run, enrich=enrich)
             _collect(
-                name, source_cls, config_dicts, settings, repo, run, dry_run, no_ai, ai, enricher
+                name,
+                source_cls,
+                config_dicts,
+                settings,
+                repo,
+                run,
+                dry_run=dry_run,
+                no_ai=no_ai,
+                ai=ai,
+                enricher=enricher,
+                platforms=platforms,
+                ai_switched_off=ai_switched_off,
             )
     except BaseException as exc:
         if run.status is RunStatus.RUNNING:  # failed before the run row was opened
@@ -139,6 +168,18 @@ def run_source(
     return run.status
 
 
+def enabled_platforms(source_cls: type[Source], repo: Repository) -> list[str] | None:
+    """The source's platforms that are switched on, or None when the switches
+    are unknown (no database: every platform is read)."""
+    switches = repo.get_platform_switches(source_cls.name)
+    if switches is None:
+        return None
+    for key in source_cls.platforms:
+        if key not in switches:
+            log.warning("platform %s has no source_platforms row; treated as on", key)
+    return [key for key in source_cls.platforms if switches.get(key, True)]
+
+
 def _collect(
     name: str,
     source_cls: type[Source],
@@ -146,14 +187,25 @@ def _collect(
     settings: Settings,
     repo: Repository,
     run: RunRecorder,
+    *,
     dry_run: bool,
     no_ai: bool,
     ai: AIClient | None,
     enricher: Enricher | None,
+    platforms: list[str] | None = None,
+    ai_switched_off: bool = False,
 ) -> None:
     # Inside the recorder so a missing key is logged as a failed run.
     settings.require(*source_cls.required_settings, scope=name)
-    assess = build_assessor(settings, run, dry_run=dry_run, no_ai=no_ai, ai=ai, enricher=enricher)
+    assess = build_assessor(
+        settings,
+        run,
+        dry_run=dry_run,
+        no_ai=no_ai,
+        ai=ai,
+        enricher=enricher,
+        ai_switched_off=ai_switched_off,
+    )
     if source_cls.needs_ai and assess is None:
         raise AgentError(
             f"source {name!r} needs AI to read its items; it can't run with --no-ai "
@@ -164,20 +216,60 @@ def _collect(
         report_error=run.record_error,
         ai=assess,
         is_known_url=lambda url: repo.lead_id_for_source_url(url) is not None,
+        enabled_platforms=platforms,
+        on_fetched=run.platform_fetched,
     )
     for config in config_dicts:
         for candidate in source.collect(config):
             run.stats.items_seen += 1
+            platform = candidate.signal.platform
             try:
-                process_candidate(candidate, repo, run, assess)
+                action = process_candidate(candidate, repo, run, assess)
             except FatalRunError:
                 raise
             except Exception as exc:
+                run.count_item(platform, new_lead=False)
                 run.record_error(
                     f"{type(exc).__name__}: {exc}",
                     source_url=candidate.signal.source_url,
                     domain=candidate.domain,
+                    **({"platform": platform} if platform else {}),
                 )
+            else:
+                run.count_item(platform, new_lead=action is Action.CREATE_LEAD)
+    if assess is not None:
+        score_backlog(name, repo, run, assess)
+
+
+def score_backlog(
+    name: str, repo: Repository, run: RunRecorder, assess: Assess, limit: int = BACKLOG_PER_RUN
+) -> int:
+    """Score, enrich and draft new leads that were saved while Claude AI was
+    off (oldest first, up to `limit`). Returns how many were scored; each
+    counts as an updated lead. A failure leaves the lead for the next run."""
+    pending = repo.unscored_leads(name, limit)
+    if pending:
+        log.info("scoring %d lead(s) saved while Claude AI was off", len(pending))
+    scored = 0
+    for stored in pending:
+        candidate = stored.candidate
+        domains = [candidate.domain] if candidate.domain else []
+        if repo.is_do_not_contact(domains=domains, emails=candidate.emails):
+            log.info("unscored lead %s is on do_not_contact; not scored", stored.lead_id)
+            continue
+        try:
+            if repo.save_assessment(stored, assess(candidate)):
+                scored += 1
+                run.stats.leads_updated += 1
+        except FatalRunError:
+            raise
+        except Exception as exc:
+            run.record_error(
+                f"scoring a saved lead failed: {type(exc).__name__}: {exc}",
+                lead_id=str(stored.lead_id),
+                source_url=candidate.signal.source_url,
+            )
+    return scored
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -27,6 +27,8 @@ export type ListLead = {
   fit_score: number | null;
   status: LeadStatus;
   first_source: LeadSource;
+  /** Where it was found (RemoteOK, EU-Startups...), if known. */
+  platform: string | null;
   service_fit: Service[];
   country: string | null;
   created_at: string;
@@ -116,7 +118,9 @@ export function LeadsList({ leads }: { leads: ListLead[] }) {
                     {lead.company_name}
                   </Link>
                   <p className="truncate text-xs text-muted-foreground">
-                    {[lead.domain, SOURCE_LABELS[lead.first_source], lead.country].filter(Boolean).join(" · ")}
+                    {[lead.domain, lead.platform ?? SOURCE_LABELS[lead.first_source], lead.country]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </p>
                 </div>
                 <ScoreBadge score={lead.fit_score} />
@@ -141,6 +145,7 @@ export function LeadsList({ leads }: { leads: ListLead[] }) {
               <TableHead>Score</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Source</TableHead>
+              <TableHead>Platform</TableHead>
               <TableHead>Services</TableHead>
               <TableHead>Country</TableHead>
               <TableHead>Contact</TableHead>
@@ -170,6 +175,9 @@ export function LeadsList({ leads }: { leads: ListLead[] }) {
                   <StatusBadge status={lead.status} />
                 </TableCell>
                 <TableCell>{SOURCE_LABELS[lead.first_source]}</TableCell>
+                <TableCell className="whitespace-nowrap">
+                  {lead.platform ?? <span className="text-muted-foreground">–</span>}
+                </TableCell>
                 <TableCell className="max-w-48 truncate">
                   <Services services={lead.service_fit} />
                 </TableCell>

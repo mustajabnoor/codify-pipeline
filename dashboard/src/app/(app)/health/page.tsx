@@ -2,6 +2,7 @@ import { AlertTriangle, ExternalLink } from "lucide-react";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
+import { RunStatusBadge } from "@/components/run-status";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireMember } from "@/lib/auth";
@@ -14,6 +15,7 @@ import {
   WINDOW_DAYS,
 } from "@/lib/health";
 import { formatDateTime, type LeadSource, SOURCE_LABELS } from "@/lib/labels";
+import { expectedSources } from "@/lib/platforms";
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 
@@ -35,17 +37,6 @@ export default function HealthPage() {
   );
 }
 
-const STATUS_TONE: Record<RunRow["status"], string> = {
-  success: "bg-emerald-600 text-white",
-  partial: "bg-amber-500 text-white",
-  failed: "bg-destructive text-white",
-  running: "bg-secondary text-secondary-foreground",
-};
-
-function RunStatus({ status }: { status: RunRow["status"] }) {
-  return <Badge className={cn("border-transparent capitalize", STATUS_TONE[status])}>{status}</Badge>;
-}
-
 function sourceName(source: string): string {
   return SOURCE_LABELS[source as LeadSource] ?? source;
 }
@@ -61,7 +52,7 @@ async function Health() {
   const supabase = await createClient();
   const now = new Date();
   const since = new Date(now.getTime() - WINDOW_DAYS * 86400_000).toISOString();
-  const [runsResult, configsResult] = await Promise.all([
+  const [runsResult, configsResult, platformsResult, settingsResult] = await Promise.all([
     supabase
       .from("agent_runs")
       .select(
@@ -71,12 +62,22 @@ async function Health() {
       .order("started_at", { ascending: false })
       .limit(500),
     supabase.from("source_configs").select("source").eq("enabled", true),
+    supabase.from("source_platforms").select("source, enabled, needs_ai"),
+    supabase.from("app_settings").select("ai_enabled").maybeSingle(),
   ]);
   if (runsResult.error) throw new Error(`Could not load runs: ${runsResult.error.message}`);
   if (configsResult.error) throw new Error(`Could not load sources: ${configsResult.error.message}`);
+  if (platformsResult.error) throw new Error(`Could not load platforms: ${platformsResult.error.message}`);
+  if (settingsResult.error) throw new Error(`Could not load settings: ${settingsResult.error.message}`);
 
   const runs: RunRow[] = runsResult.data;
-  const enabled = [...new Set(configsResult.data.map((c) => c.source))];
+  // Sources with every platform switched off, or paused while AI is off, aren't
+  // expected to run, so they aren't flagged as missed.
+  const enabled = expectedSources(
+    configsResult.data.map((c) => c.source),
+    platformsResult.data,
+    settingsResult.data?.ai_enabled ?? true,
+  );
   const health = sourceHealth(runs, enabled, now);
   const recent = runs.filter((r) => r.source !== "fixture").slice(0, 20);
 
@@ -88,10 +89,10 @@ async function Health() {
             <CardHeader>
               <CardTitle className="flex items-center justify-between gap-2">
                 <span>{sourceName(h.source)}</span>
-                {h.last ? <RunStatus status={h.last.status} /> : <Badge variant="outline">no runs</Badge>}
+                {h.last ? <RunStatusBadge status={h.last.status} /> : <Badge variant="outline">no runs</Badge>}
               </CardTitle>
               <CardDescription>
-                {h.enabled ? "Enabled" : "Disabled"}
+                {h.enabled ? "Enabled" : "Off or paused (see Sources)"}
                 {h.last && ` · last run ${formatDateTime(h.last.started_at)}`}
                 {h.last && duration(h.last) && ` (${duration(h.last)})`}
               </CardDescription>
@@ -131,7 +132,7 @@ async function Health() {
             {recent.map((r) => (
               <li key={r.id} className="space-y-1 py-3">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <RunStatus status={r.status} />
+                  <RunStatusBadge status={r.status} />
                   <span className="font-medium">{sourceName(r.source)}</span>
                   <span className="text-muted-foreground">{formatDateTime(r.started_at)}</span>
                   <span className="text-muted-foreground">

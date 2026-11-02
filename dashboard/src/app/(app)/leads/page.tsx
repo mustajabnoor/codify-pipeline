@@ -48,6 +48,7 @@ async function Leads({ searchParams }: Pick<PageProps<"/leads">, "searchParams">
       fit_score: row.fit_score,
       status: row.status,
       first_source: row.first_source,
+      platform: row.source_platforms?.name ?? null,
       service_fit: row.service_fit ?? [],
       country: row.country,
       created_at: row.created_at,
