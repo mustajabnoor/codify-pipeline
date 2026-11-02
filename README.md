@@ -105,8 +105,9 @@ uv run python -m agent summary --dry-run
 
 ## Dashboard
 
-Next.js app in `dashboard/` (Node 22). Setup, sign-in and the Supabase Auth
-settings it needs are in [dashboard/README.md](dashboard/README.md).
+Next.js app in `dashboard/` (Node 22), live at https://pipeline.codify-labs.com
+(Vercel). Setup, sign-in, deployment and the Supabase Auth settings it needs are
+in [dashboard/README.md](dashboard/README.md).
 
 ```bash
 cd dashboard && npm install && npm run dev

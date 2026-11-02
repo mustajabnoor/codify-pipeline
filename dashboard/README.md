@@ -38,6 +38,18 @@ npm run lint && npm run typecheck && npm test && npm run build
   safe in the browser.
 - The dashboard never uses the service-role key (CI fails if it appears in `src/`).
 
+## Production
+
+Live at https://pipeline.codify-labs.com (Vercel, owner's account).
+
+- Vercel project: root directory `dashboard`; `main` deploys to production.
+- Environment variables: **Production** = pipeline-prod `NEXT_PUBLIC_SUPABASE_URL`
+  and `NEXT_PUBLIC_SUPABASE_ANON_KEY`; **Preview** = the pipeline-dev values, so
+  PR previews never touch live data. Never add the service-role key.
+- Domain: `pipeline.codify-labs.com` (DNS record as shown in Vercel → Domains).
+- To give someone access: add them in pipeline-prod Supabase → Authentication →
+  Users, then insert their email into `team_members`.
+
 ## Supabase Auth settings (dev and prod)
 
 Authentication → URL Configuration:
