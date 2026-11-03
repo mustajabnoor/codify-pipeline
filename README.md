@@ -49,6 +49,10 @@ uv run python -m agent run job_posting --dry-run
 uv run python -m agent run funding --dry-run
 ```
 
+```bash
+uv run python -m agent run social --dry-run --no-ai
+```
+
 The funding source needs AI to read articles, so it can't run with `--no-ai`.
 
 New leads are extracted, scored and drafted by Claude (see CLAUDE.md §6). That

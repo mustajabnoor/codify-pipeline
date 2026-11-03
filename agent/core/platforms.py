@@ -18,6 +18,7 @@ PLATFORM_HOSTS: dict[str, str] = {
     "eu-startups.com": "eu_startups",
     "techfundingnews.com": "tech_funding_news",
     "news.crunchbase.com": "crunchbase_news",
+    "reddit.com": "reddit",
 }
 
 # Longest host first, so news.crunchbase.com wins over a crunchbase.com entry.
