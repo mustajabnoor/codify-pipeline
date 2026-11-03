@@ -28,9 +28,20 @@ MIGRATIONS = Path(__file__).resolve().parents[2] / "supabase" / "migrations"
 _ROW = re.compile(r"\('([a-z0-9_]+)',\s*'([a-z_]+)',\s*'[^']+',\s*(true|false),")
 
 
+# A later migration shipping a platform: "set available = true where key = 'x'".
+_SHIPPED = re.compile(
+    r"update public\.source_platforms\s+set available = true\s+where key = '([a-z0-9_]+)'"
+)
+
+
 def migration_platforms() -> dict[str, tuple[str, bool]]:
+    """Platforms as the migrations leave them: (source, available) by key."""
     (path,) = MIGRATIONS.glob("*_source_platforms.sql")
-    return {key: (source, avail == "true") for key, source, avail in _ROW.findall(path.read_text())}
+    rows = {key: (source, avail == "true") for key, source, avail in _ROW.findall(path.read_text())}
+    for later in sorted(MIGRATIONS.glob("*.sql")):
+        for key in _SHIPPED.findall(later.read_text()):
+            rows[key] = (rows[key][0], True)
+    return rows
 
 
 def test_platform_for_url() -> None:
@@ -38,6 +49,7 @@ def test_platform_for_url() -> None:
     assert platform_for_url("https://www.eu-startups.com/feed/") == "eu_startups"
     assert platform_for_url("https://news.crunchbase.com/feed/") == "crunchbase_news"
     assert platform_for_url("https://WeWorkRemotely.com/categories/x.rss") == "weworkremotely"
+    assert platform_for_url("https://www.reddit.com/r/forhire/new/.rss") == "reddit"
     assert platform_for_url("https://crunchbase.com/feed/") is None
     assert platform_for_url("https://feeds.example.com/x.rss") is None
 

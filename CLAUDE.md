@@ -60,7 +60,7 @@ README.md
 |---|---|---|---|---|
 | 1 | **Job postings** | Company hiring a Bubble / Shopify / React / full-stack / mobile developer | RemoteOK JSON API (its RSS is gone), We Work Remotely RSS, Apify job scrapers (LinkedIn Jobs, Indeed), Wellfound | Daily |
 | 2 | **Funding news** | Startup just raised pre-seed / seed / Series A | Full-text funding-news RSS (EU-Startups, Tech Funding News, Crunchbase News); Claude extracts company, website, amount, round, founders | Daily |
-| 3 | **Social listening** | Public post asking for a developer/agency or describing a broken app | Reddit API (r/forhire, r/startups, r/SaaS, r/Entrepreneur, r/Bubble, r/lovable, r/SideProject), F5Bot alerts, Indie Hackers | Every 4 hours |
+| 3 | **Social listening** | Public post asking for a developer/agency or describing a broken app | Reddit (public RSS for now; API once keys are approved) — r/forhire, r/startups, r/SaaS, r/Entrepreneur, r/Bubble, r/lovable, r/SideProject; F5Bot alerts, Indie Hackers later | Every 4 hours |
 | 4 | **Tech-stack detection** | Site on Bubble / Shopify / WordPress that is slow or broken | BuiltWith / Wappalyzer / Store Leads lists + Google PageSpeed Insights API | Weekly batch |
 | 5 | **Google Maps** | Local business with no website or a broken/outdated one | Google Places API or Apify Google Maps scraper, by city + category | Weekly |
 | 6 | **Product launches** | New product launched, founder likely needs help scaling/fixing | Product Hunt API (GraphQL), BetaList feed | Daily |
@@ -95,6 +95,15 @@ Enrichment runs after scoring (not before) so rejects and weak leads spend no lo
 - **Company domain from text:** collectors whose source gives no website (job boards) take the company's domain from links in the post, accepting only hosts that contain the company name (`company_domain_from_text` in `agent/core/normalize.py`). When unsure it returns none: a wrong domain would merge two companies.
 - **Domain-less duplicates are accepted:** the same company reported by two sources without a domain (e.g. a funding round covered by two outlets, one without a company link) becomes two leads; merge or reject them in the dashboard. Matching by company name was considered and rejected (risk of merging different companies).
 - **Funding news:** a website counts only if the article itself shows it (`verified_domain` in `agent/sources/funding.py`). Rounds kept: those in `rounds`, plus unnamed rounds up to `unnamed_round_max`. `funding_amount` is stored only for USD; other currencies stay in the signal's metadata. FinSMEs blocks automated requests, so it isn't used.
+- **Social listening (Reddit)** (`agent/sources/social.py`): reads `https://www.reddit.com/r/<sub>/new/.rss?limit=100` per subreddit in config (Reddit's search feeds proved unreliable), 2 s apart (`request_delay_seconds`). Filters in code before any AI call:
+  - drops posts older than `max_age_days` (3) and posts tagged `[For Hire]` (service offers);
+  - in `hiring_subreddits` (r/forhire) keeps only `[Hiring]` posts with a `hiring_keywords` match;
+  - elsewhere keeps posts whose title or text has a `keywords` phrase;
+  - drops posts with an `exclude_keywords` phrase or a URL already stored.
+  - At most `max_posts` (15) new posts per run go to AI.
+  - A lead is named `u/<author>`, with no domain (dedupe on the post URL, no email lookup). Its contact is the poster's profile (`other_url`), and the draft is a reply a human sends.
+  - On a 429 after retries the run stops asking Reddit until the next run.
+  - Only `fetch_subreddit` talks to Reddit, so moving to the official API (once approved keys exist) changes that one method.
 - **Domain normalization** drops platform hosts (reddit.com, linkedin.com, github.com, producthunt.com, job-board / ATS hosts like greenhouse.io, …) so a link to them never becomes a company domain; customer subdomains on hosting platforms (`acme.myshopify.com`) are kept. List lives in `agent/core/normalize.py`.
 
 ## 6. AI steps (Claude API)
@@ -195,6 +204,7 @@ Current schedule (cron in UTC → Asia/Karachi):
 |---|---|---|---|
 | `job-posting.yml` | `0 3 * * *` | 08:00 | `python -m agent run job_posting` |
 | `funding.yml` | `30 3 * * *` | 08:30 | `python -m agent run funding` |
+| `social.yml` | `17 */4 * * *` | every 4h at :17 (04:17, 08:17, …) | `python -m agent run social` |
 | `daily-summary.yml` | `15 4 * * *` | 09:15 | `python -m agent summary` |
 
 - Source workflows call the shared `run-source.yml` (`workflow_call`); a new source only needs a small caller file with its cron and a `concurrency` group. Manual runs have a `dry_run` checkbox.
@@ -217,7 +227,7 @@ APOLLO_API_KEY=
 MILLIONVERIFIER_API_KEY=
 GOOGLE_PAGESPEED_API_KEY=
 GOOGLE_PLACES_API_KEY=
-REDDIT_CLIENT_ID=
+REDDIT_CLIENT_ID=                 # not used yet: social reads public RSS until API access is approved
 REDDIT_CLIENT_SECRET=
 REDDIT_USER_AGENT=
 PRODUCTHUNT_TOKEN=
@@ -257,6 +267,7 @@ Two dev and prod Supabase projects exist: **pipeline-dev** (Claude Code cloud se
   - 3.5 Vercel deploy (done; live at https://pipeline.codify-labs.com since 2026-10-30, signed in with magic link)
   - 3.6 Source platforms: platform on every lead/signal, Sources page with per-platform switches + last run, Claude API switch with score-later (done; migration `20261102100000_source_platforms.sql` must be applied to dev and prod before the code runs)
 - **Phase 4 — More sources:** Social listening, Product launches, then Google Maps, Tech-stack, Agency partners.
+  - 4.1 Social listening: Reddit via public RSS (done; ships switched off. The Reddit API keys in the cloud environment are placeholders, and on 2026-11-03 Reddit answered 429 to unauthenticated feed requests from a cloud IP, so check a manual dry run from GitHub Actions before relying on it. F5Bot and Indie Hackers come later)
 - **Phase 5 — Outreach:** push approved leads to Instantly/Smartlead, reply import + AI reply categorization, follow-up reminders, source performance view.
 
 ## 13. How Claude should work in this repo

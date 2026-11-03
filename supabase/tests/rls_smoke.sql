@@ -60,13 +60,13 @@ begin
   end if;
   update public.source_platforms set enabled = true where key = 'remoteok';
   begin
-    update public.source_platforms set enabled = true where key = 'reddit';
+    update public.source_platforms set enabled = true where key = 'f5bot';
     raise exception 'enabling a platform that is not available should have failed';
   exception when check_violation then
     null;
   end;
   begin
-    update public.source_platforms set available = true where key = 'reddit';
+    update public.source_platforms set available = true where key = 'f5bot';
     raise exception 'team member should not change availability';
   exception when insufficient_privilege then
     null;

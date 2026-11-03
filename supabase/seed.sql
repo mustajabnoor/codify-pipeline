@@ -81,9 +81,17 @@ insert into public.source_configs (source, name, config, schedule, enabled) valu
     "keywords": ["looking for a developer", "need a developer", "hire a developer",
                  "looking for an agency", "bubble developer", "app is broken",
                  "stripe checkout", "need help with my app"],
-    "exclude_keywords": ["[for hire]"]
+    "hiring_subreddits": ["forhire"],
+    "hiring_keywords": ["developer", "programmer", "engineer", "app", "website", "web site",
+                        "landing page", "bubble", "shopify", "wordpress", "webflow", "react",
+                        "next.js", "flutter", "mvp", "saas", "no-code", "nocode", "stripe",
+                        "full stack", "fullstack", "frontend", "backend", "ai integration"],
+    "exclude_keywords": ["unpaid", "equity only", "rev share", "revenue share", "for exposure"],
+    "max_age_days": 3,
+    "max_posts": 15,
+    "request_delay_seconds": 2
   }',
-  '0 */4 * * *', false
+  '17 */4 * * *', true
 ),
 (
   'tech_stack', 'default',

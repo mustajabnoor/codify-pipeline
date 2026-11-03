@@ -8,7 +8,7 @@ import pytest
 from agent.sources.registry import SOURCES
 
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
-SCHEDULED = {"job_posting": "job-posting.yml", "funding": "funding.yml"}
+SCHEDULED = {"job_posting": "job-posting.yml", "funding": "funding.yml", "social": "social.yml"}
 
 
 def read(name: str) -> str:
@@ -49,10 +49,8 @@ def test_daily_summary_runs_after_the_sources() -> None:
     assert "python -m agent summary" in text
     for secret in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SLACK_WEBHOOK_URL"):
         assert f"secrets.{secret}" in text
-    # The summary is posted after the last morning source run starts.
-    source_minutes = [
-        int(hour) * 60 + int(minute)
-        for file in SCHEDULED.values()
-        for minute, hour in [read(file).split('- cron: "')[1].split()[:2]]
-    ]
-    assert max(source_minutes) < 4 * 60 + 15
+    # The summary is posted after the last morning run of the daily sources
+    # starts (sources running every few hours, like social, have no single one).
+    crons = [read(file).split('- cron: "')[1].split()[:2] for file in SCHEDULED.values()]
+    source_minutes = [int(hour) * 60 + int(minute) for minute, hour in crons if hour.isdigit()]
+    assert source_minutes and max(source_minutes) < 4 * 60 + 15

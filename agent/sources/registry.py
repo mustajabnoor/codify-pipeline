@@ -3,6 +3,7 @@ from agent.sources.base import Source
 from agent.sources.fixture import FixtureSource
 from agent.sources.funding import FundingNewsSource
 from agent.sources.job_posts import JobPostingsSource
+from agent.sources.social import SocialListeningSource
 
 SOURCES: dict[str, type[Source]] = {
     cls.name: cls
@@ -10,6 +11,7 @@ SOURCES: dict[str, type[Source]] = {
         FixtureSource,
         JobPostingsSource,
         FundingNewsSource,
+        SocialListeningSource,
     )
 }
 
